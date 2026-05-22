@@ -1,0 +1,23 @@
+{
+  "name": "allahabad-hc-mcp",
+  "version": "1.0.0",
+  "description": "MCP Server for Allahabad High Court — provides structured tools for case status, cause lists, bench roster, judgments, defective lists, court calendar, and advocate case lookup",
+  "type": "module",
+  "main": "server.js",
+  "bin": {
+    "allahabad-hc-mcp": "./server.js"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "cheerio": "^1.0.0",
+    "node-fetch": "^3.3.2",
+    "sharp": "^0.33.2",
+    "tesseract.js": "^5.1.1"
+  },
+  "keywords": ["mcp", "allahabad-high-court", "legal", "india", "court"],
+  "license": "MIT"
+}

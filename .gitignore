@@ -1,0 +1,9 @@
+# Sensitive files — never commit these
+API_CREDENTIALS.md
+push_to_github.sh
+.env
+*.env
+.env.*
+node_modules/
+.DS_Store
+_github_push.html
