@@ -1586,21 +1586,22 @@ a:hover { text-decoration: underline; }
 }
 .tag-picker-dropdown {
   position: absolute;
-  top: 100%;
+  bottom: 100%;
   left: 0;
   z-index: 50;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow-lg);
-  max-height: 200px;
+  max-height: 280px;
   overflow-y: auto;
-  min-width: 160px;
-  padding: 4px;
+  min-width: 200px;
+  padding: 6px;
+  margin-bottom: 6px;
 }
 .tag-picker-item {
-  padding: 6px 10px;
-  font-size: 12px;
+  padding: 9px 12px;
+  font-size: 13px;
   cursor: pointer;
   border-radius: var(--radius-sm);
   transition: var(--transition);
