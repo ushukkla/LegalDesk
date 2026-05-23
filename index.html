@@ -2920,10 +2920,10 @@ function LoginPage({ onLogin }) {
         } catch (e) {
           console.warn('[LegalDesk] Profile fetch failed/timed out, showing verification:', e);
         }
-        // Also check localStorage for a cached profile
-        const cachedUser = LS.get('user');
+        // Also check localStorage for a cached profile (current session or saved from previous logout)
+        const cachedUser = LS.get('user') || LS.get('profile_' + user.uid);
         if ((profile && profile.verified) || (cachedUser && cachedUser.verified && cachedUser.uid === user.uid)) {
-          // Returning user — skip verification
+          // Returning user — skip verification, go straight to dashboard
           const mergedProfile = { ...(cachedUser || {}), ...(profile || {}) };
           onLogin({
             ...mergedProfile,
@@ -6496,6 +6496,8 @@ function SettingsPage() {
   const [newMemberPhone, setNewMemberPhone] = useState('');
 
   const handleLogout = async () => {
+    // Cache profile for quick re-login (skip verification on next sign-in)
+    if (user?.uid) LS.set('profile_' + user.uid, user);
     try { await AuthService.signOut(); } catch {}
     LS.remove('user');
     setUser(null);
@@ -7501,6 +7503,8 @@ function App() {
         const data = LS.get(name);
         if (data !== null) await FirestoreService.saveCollection(user.uid, name, data);
       }
+      // Cache profile for quick re-login (skip verification on next sign-in)
+      LS.set('profile_' + user.uid, user);
     }
     try { await AuthService.signOut(); } catch {}
     setUser(null);
