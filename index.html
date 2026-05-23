@@ -2146,8 +2146,8 @@ const AzureTranslator = {
 // COURT API SERVICE — connects frontend to the LegalDesk backend API
 // ─────────────────────────────────────────────────────────────────────
 const CourtAPI = {
-  // Base URL — change this when deploying to production
-  baseUrl: LS.get('courtApiUrl', 'http://localhost:3001'),
+  // Base URL — uses Render cloud deployment by default
+  baseUrl: LS.get('courtApiUrl', 'https://legaldesk-api.onrender.com'),
 
   setBaseUrl(url) { this.baseUrl = url; LS.set('courtApiUrl', url); },
 
