@@ -2001,21 +2001,6 @@ const AzureTranslator = {
     }
   },
 
-  /** Save API credentials to Firestore config (one-time setup) */
-  async saveCredentials(key, region) {
-    try {
-      await firebaseDb.collection('config').doc('azure_translator').set({
-        key, region: region || 'centralindia', updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-      });
-      this._key = key;
-      this._region = region || 'centralindia';
-      return true;
-    } catch (err) {
-      console.error('[AzureTranslator] Failed to save credentials:', err);
-      return false;
-    }
-  },
-
   get key() { return this._key; },
   get region() { return this._region || 'centralindia'; },
 
@@ -2027,7 +2012,7 @@ const AzureTranslator = {
     // Ensure credentials are loaded
     if (!this.key) {
       const loaded = await this.loadCredentials();
-      if (!loaded) throw new Error('Azure Translator not configured. Please add your API key in Settings → Translation.');
+      if (!loaded) throw new Error('Translation service is temporarily unavailable. Please try again later.');
     }
 
     // Split long texts into chunks (Azure limit is 50K chars per request)
@@ -6536,20 +6521,6 @@ function SettingsPage() {
   const { user, setUser, theme, setTheme, addToast, teamMembers, setTeamMembers } = useContext(AppContext);
   const [newMemberName, setNewMemberName] = useState('');
   const [newMemberPhone, setNewMemberPhone] = useState('');
-  const [azureKey, setAzureKey] = useState('');
-  const [azureRegion, setAzureRegion] = useState('centralindia');
-  const [azureConfigured, setAzureConfigured] = useState(false);
-  const [savingAzure, setSavingAzure] = useState(false);
-
-  // Load Azure config status on mount
-  useEffect(() => {
-    AzureTranslator.loadCredentials().then(loaded => {
-      if (loaded) {
-        setAzureConfigured(true);
-        setAzureRegion(AzureTranslator.region);
-      }
-    });
-  }, []);
 
   const handleLogout = async () => {
     try { await AuthService.signOut(); } catch {}
@@ -6652,49 +6623,6 @@ function SettingsPage() {
                     <button className="btn btn-sm btn-ghost" style={{color:'var(--danger)'}} onClick={() => removeMember(member.id)}>{Icons.trash}</button>
                   </div>
                 ))}
-              </div>
-            )}
-          </div>
-
-          {/* Translation API Configuration */}
-          <div className="card" style={{marginTop:20}}>
-            <h3 style={{fontSize:15, fontWeight:700, marginBottom:12}}>{Icons.translate} Translation API</h3>
-            {azureConfigured ? (
-              <div>
-                <div style={{display:'flex', alignItems:'center', gap:8, padding:'10px 14px', background:'var(--success-bg)', borderRadius:'var(--radius)', marginBottom:12}}>
-                  {Icons.checkCircle}
-                  <span style={{fontSize:13, color:'var(--success)'}}>Azure Translator configured (Region: {azureRegion})</span>
-                </div>
-                <button className="btn btn-sm btn-outline" onClick={() => setAzureConfigured(false)}>Update Key</button>
-              </div>
-            ) : (
-              <div>
-                <p style={{fontSize:13, color:'var(--text-secondary)', marginBottom:12}}>
-                  Enter your Microsoft Azure Translator API key to enable real-time translation in 100+ languages.
-                </p>
-                <div className="form-group">
-                  <label className="form-label">API Key</label>
-                  <input className="form-input" type="password" placeholder="Paste your Azure Translator Key 1 here" value={azureKey} onChange={e => setAzureKey(e.target.value)} />
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Region</label>
-                  <select className="form-select" value={azureRegion} onChange={e => setAzureRegion(e.target.value)}>
-                    <option value="centralindia">Central India</option>
-                    <option value="eastus">East US</option>
-                    <option value="westeurope">West Europe</option>
-                    <option value="southeastasia">Southeast Asia</option>
-                    <option value="global">Global</option>
-                  </select>
-                </div>
-                <button className="btn btn-primary btn-sm" disabled={!azureKey.trim() || savingAzure} onClick={async () => {
-                  setSavingAzure(true);
-                  const ok = await AzureTranslator.saveCredentials(azureKey.trim(), azureRegion);
-                  setSavingAzure(false);
-                  if (ok) { setAzureConfigured(true); setAzureKey(''); addToast('Translation API configured!', 'success'); }
-                  else addToast('Failed to save. Try again.', 'error');
-                }}>
-                  {savingAzure ? 'Saving...' : 'Save API Key'}
-                </button>
               </div>
             )}
           </div>
