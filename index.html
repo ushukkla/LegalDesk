@@ -1966,142 +1966,55 @@ const FirestoreService = {
 };
 
 // ─────────────────────────────────────────────────────────────────────
-// AZURE TRANSLATOR SERVICE
+// TRANSLATOR SERVICE — routes through backend (no API keys on client)
 // ─────────────────────────────────────────────────────────────────────
 const AzureTranslator = {
-  endpoint: 'https://api.cognitive.microsofttranslator.com',
-  _key: null,      // loaded at runtime from Firestore — never hardcoded
-  _region: null,
-  _loading: false,
+  // Kept as "AzureTranslator" name to avoid breaking references throughout the codebase
+  // Actually routes through LegalDesk backend → Google Translate (free, no key needed)
 
-  /** Load API credentials from Firestore config (called after auth) */
-  async loadCredentials() {
-    if (this._key) return true;
-    if (this._loading) {
-      // Wait for in-flight load
-      await new Promise(r => { const i = setInterval(() => { if (!this._loading) { clearInterval(i); r(); } }, 100); });
-      return !!this._key;
-    }
-    this._loading = true;
-    try {
-      const doc = await firebaseDb.collection('config').doc('azure_translator').get();
-      if (doc.exists) {
-        const data = doc.data();
-        this._key = data.key;
-        this._region = data.region || 'centralindia';
-        this._loading = false;
-        return true;
-      }
-      this._loading = false;
-      return false;
-    } catch (err) {
-      console.error('[AzureTranslator] Failed to load credentials:', err);
-      this._loading = false;
-      return false;
-    }
-  },
+  async loadCredentials() { return true; }, // No credentials needed — backend handles it
 
-  get key() { return this._key; },
-  get region() { return this._region || 'centralindia'; },
-
-  /** Translate text from source to target language */
+  /** Translate text via backend proxy */
   async translate(text, fromLang, toLang) {
     if (!text || !text.trim()) return '';
     if (fromLang === toLang) return text;
 
-    // Ensure credentials are loaded
-    if (!this.key) {
-      const loaded = await this.loadCredentials();
-      if (!loaded) throw new Error('Translation service is temporarily unavailable. Please try again later.');
-    }
-
-    // Split long texts into chunks (Azure limit is 50K chars per request)
-    const MAX_CHARS = 5000;
-    if (text.length > MAX_CHARS) {
-      const chunks = [];
-      let i = 0;
-      while (i < text.length) {
-        // Try to split at sentence boundary
-        let end = Math.min(i + MAX_CHARS, text.length);
-        if (end < text.length) {
-          const lastPeriod = text.lastIndexOf('.', end);
-          const lastNewline = text.lastIndexOf('\n', end);
-          const splitAt = Math.max(lastPeriod, lastNewline);
-          if (splitAt > i) end = splitAt + 1;
-        }
-        chunks.push(text.slice(i, end));
-        i = end;
-      }
-      const results = [];
-      for (const chunk of chunks) {
-        const r = await this._doTranslate(chunk, fromLang, toLang);
-        results.push(r);
-      }
-      return results.join('');
-    }
-
-    return this._doTranslate(text, fromLang, toLang);
-  },
-
-  async _doTranslate(text, fromLang, toLang) {
     try {
-      const url = `${this.endpoint}/translate?api-version=3.0&from=${fromLang}&to=${toLang}`;
-      const resp = await fetch(url, {
+      const resp = await fetch(`${CourtAPI.baseUrl}/api/translate`, {
         method: 'POST',
-        headers: {
-          'Ocp-Apim-Subscription-Key': this.key,
-          'Ocp-Apim-Subscription-Region': this.region,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify([{ Text: text }]),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, from: fromLang, to: toLang }),
+        signal: AbortSignal.timeout(60000), // 60s for long documents
       });
 
       if (!resp.ok) {
-        const errBody = await resp.text();
-        if (resp.status === 429) throw new Error('Translation rate limit exceeded. Please wait a moment and try again.');
-        if (resp.status === 403) throw new Error('Translation quota exceeded (2M chars/month). Please try again next month or upgrade your plan.');
-        if (resp.status === 401) throw new Error('Translation authentication failed. Please check API credentials.');
-        throw new Error(`Translation failed (HTTP ${resp.status}): ${errBody}`);
+        const errBody = await resp.json().catch(() => ({}));
+        throw new Error(errBody.error || `Translation failed (HTTP ${resp.status})`);
       }
 
       const data = await resp.json();
-      return data[0]?.translations?.[0]?.text || text;
+      if (data.status === 'success') return data.translatedText;
+      throw new Error(data.error || 'Translation failed');
     } catch (err) {
-      if (err.message.includes('fetch')) throw new Error('Network error. Cannot reach translation service. Please check your internet connection.');
+      if (err.name === 'AbortError' || err.name === 'TimeoutError') {
+        throw new Error('Translation timed out. The document may be too large — try a shorter section.');
+      }
+      if (err.message.includes('fetch') || err.message.includes('NetworkError')) {
+        throw new Error('Cannot reach translation service. Please check your internet connection.');
+      }
       throw err;
     }
   },
 
-  /** Detect language of text */
-  async detect(text) {
-    try {
-      const url = `${this.endpoint}/detect?api-version=3.0`;
-      const resp = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Ocp-Apim-Subscription-Key': this.key,
-          'Ocp-Apim-Subscription-Region': this.region,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify([{ Text: text.slice(0, 500) }]),
-      });
-      if (!resp.ok) return null;
-      const data = await resp.json();
-      return data[0] || null;
-    } catch { return null; }
-  },
-
-  /** Get supported languages (cached) */
+  /** Get supported languages from backend */
   _langCache: null,
   async getLanguages() {
     if (this._langCache) return this._langCache;
     try {
-      const resp = await fetch(`${this.endpoint}/languages?api-version=3.0&scope=translation`);
+      const resp = await fetch(`${CourtAPI.baseUrl}/api/translate/languages`, { signal: AbortSignal.timeout(10000) });
       if (!resp.ok) return this._defaultLanguages();
       const data = await resp.json();
-      this._langCache = Object.entries(data.translation || {}).map(([code, info]) => ({
-        code, name: info.name, nativeName: info.nativeName
-      })).sort((a, b) => a.name.localeCompare(b.name));
+      this._langCache = (data.languages || []).map(l => ({ code: l.code, name: l.name, nativeName: l.name }));
       return this._langCache;
     } catch { return this._defaultLanguages(); }
   },
@@ -2114,12 +2027,14 @@ const AzureTranslator = {
       { code: 'ta', name: 'Tamil', nativeName: 'தமிழ்' },
       { code: 'te', name: 'Telugu', nativeName: 'తెలుగు' },
       { code: 'mr', name: 'Marathi', nativeName: 'मराठी' },
-      { code: 'gu', name: 'Gujarati', nativeName: 'ગુજરાતી' },
+      { code: 'gu', name: 'Gujarati', nativeName: 'ગુજરાতી' },
       { code: 'kn', name: 'Kannada', nativeName: 'ಕನ್ನಡ' },
       { code: 'ml', name: 'Malayalam', nativeName: 'മലയാളം' },
       { code: 'pa', name: 'Punjabi', nativeName: 'ਪੰਜਾਬੀ' },
       { code: 'or', name: 'Odia', nativeName: 'ଓଡ଼ିଆ' },
       { code: 'ur', name: 'Urdu', nativeName: 'اردو' },
+      { code: 'sa', name: 'Sanskrit', nativeName: 'संस्कृतम्' },
+      { code: 'as', name: 'Assamese', nativeName: 'অসমীয়া' },
       { code: 'ar', name: 'Arabic', nativeName: 'العربية' },
       { code: 'fr', name: 'French', nativeName: 'Français' },
       { code: 'de', name: 'German', nativeName: 'Deutsch' },
@@ -2854,7 +2769,7 @@ function buildWhatsAppUrl(matter) {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// LEGAL DICTIONARY (used as offline fallback for Azure Translator)
+// LEGAL DICTIONARY (used as offline fallback for Translator)
 // ─────────────────────────────────────────────────────────────────────
 const LEGAL_DICT_EN_HI = {
   'Court': 'न्यायालय', 'Hearing': 'सुनवाई', 'Bail': 'जमानत',
@@ -2868,7 +2783,7 @@ const LEGAL_DICT_EN_HI = {
   'Affidavit': 'शपथ पत्र', 'Injunction': 'निषेधाज्ञा',
   'Remand': 'रिमांड', 'Adjournment': 'स्थगित',
 };
-// Azure Translator is used for real translations — see AzureTranslator service above.
+// Backend translator is used for real translations — see AzureTranslator service above.
 // simulateTranslate kept as offline fallback only.
 function simulateTranslate(text, srcLang, tgtLang) {
   if (srcLang === tgtLang) return text;
@@ -4610,7 +4525,7 @@ function DocTranslateModal({ doc, translateLang, setTranslateLang, onClose, docu
         return;
       }
 
-      setProgress('Translating with Azure (' + text.length + ' chars)...');
+      setProgress('Translating (' + text.length + ' chars)...');
       const srcLang = translateLang === 'hi' ? 'en' : 'hi';
       const result = await AzureTranslator.translate(text.slice(0, 20000), srcLang, translateLang);
       setTranslatedText(result);
@@ -4662,7 +4577,7 @@ function DocTranslateModal({ doc, translateLang, setTranslateLang, onClose, docu
             <div style={{fontSize:12, color:'var(--text-muted)', marginBottom:4}}>Output file</div>
             <div style={{fontSize:14, fontWeight:600}}>{outputName.replace(/\.[^.]+$/, '.txt')}</div>
             <div style={{fontSize:12, color:'var(--text-secondary)', marginTop:4}}>
-              Translated via Azure Translator. The translated document will be saved in this matter's Documents section.
+              Translated via LegalDesk Translator. The translated document will be saved in this matter's Documents section.
             </div>
           </div>
           {progress && (
@@ -7231,7 +7146,7 @@ function TranslatePanel() {
 
   return (
     <>
-      <button className="translate-fab" onClick={() => setOpen(!open)} title="Translate (Azure)">
+      <button className="translate-fab" onClick={() => setOpen(!open)} title="Translate">
         {Icons.translate}
       </button>
       {open && (
@@ -7259,7 +7174,7 @@ function TranslatePanel() {
             <textarea className="form-input" rows={3} placeholder="Enter text to translate..." value={inputText} onChange={e => setInputText(e.target.value)} style={{marginBottom:4}} />
             <div style={{fontSize:11, color:'var(--text-muted)', marginBottom:8, display:'flex', justifyContent:'space-between'}}>
               <span>{inputText.length} chars</span>
-              <span>Azure Translator (100+ languages)</span>
+              <span>LegalDesk Translator (100+ languages)</span>
             </div>
             <button className="btn btn-primary btn-sm btn-block" onClick={doTranslate} disabled={translating || !inputText.trim()}>
               {translating ? 'Translating...' : <>{Icons.translate} Translate</>}

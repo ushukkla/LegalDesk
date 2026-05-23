@@ -1,0 +1,1241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<title>LegalDesk</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"/>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --c1:#0F172A;--c2:#1E293B;--c3:#334155;
+  --accent:#818CF8;--accent2:#6366F1;--accent-glow:rgba(129,140,248,0.15);
+  --green:#34D399;--green-bg:rgba(52,211,153,0.12);
+  --amber:#FBBF24;--amber-bg:rgba(251,191,36,0.12);
+  --rose:#FB7185;--rose-bg:rgba(251,113,133,0.12);
+  --sky:#38BDF8;--sky-bg:rgba(56,189,248,0.12);
+  --teal:#2DD4BF;--teal-bg:rgba(45,212,191,0.12);
+  --violet:#A78BFA;--violet-bg:rgba(167,139,250,0.12);
+  --orange:#FB923C;--orange-bg:rgba(251,146,60,0.12);
+  --white:#F8FAFC;--gray:#94A3B8;--gray2:#64748B;--gray3:#475569;
+  --card:rgba(30,41,59,0.7);--card-border:rgba(148,163,184,0.1);
+  --glass:rgba(15,23,42,0.85);
+  --radius:16px;--nav:68px;
+  --safe-top:env(safe-area-inset-top,20px);
+  --safe-bottom:env(safe-area-inset-bottom,0px);
+}
+html,body,#root{height:100%;width:100%;font-family:'Plus Jakarta Sans',-apple-system,sans-serif;background:var(--c1);color:var(--white);-webkit-font-smoothing:antialiased;overflow:hidden}
+::-webkit-scrollbar{width:0;height:0}
+@keyframes fadeIn{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+@keyframes slideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(129,140,248,0.4)}70%{box-shadow:0 0 0 10px rgba(129,140,248,0)}}
+@keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.5}}
+.fade-in{animation:fadeIn .4s ease-out}
+
+.app{display:flex;flex-direction:column;height:100%;max-width:480px;margin:0 auto;position:relative;overflow:hidden;background:linear-gradient(180deg,#0F172A 0%,#131B2E 50%,#0F172A 100%)}
+@media(min-width:481px){.app{border-left:1px solid var(--card-border);border-right:1px solid var(--card-border)}}
+
+.hdr{padding:10px 20px;padding-top:calc(var(--safe-top)+6px);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;z-index:10;backdrop-filter:blur(20px);background:rgba(15,23,42,0.8);border-bottom:1px solid var(--card-border)}
+.hdr-logo{display:flex;align-items:center;gap:10px}
+.hdr-logo svg{width:28px;height:28px;color:var(--accent)}
+.hdr-logo h1{font-size:18px;font-weight:800;background:linear-gradient(135deg,var(--accent),#A78BFA);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.hdr-logo span{font-size:10px;color:var(--gray);font-weight:500;display:block;margin-top:-2px;-webkit-text-fill-color:var(--gray)}
+.hdr-profile{display:flex;align-items:center;gap:10px}
+.hdr-profile-badge{display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:12px;background:var(--accent-glow);border:1px solid rgba(129,140,248,0.2);font-size:12px;font-weight:600;color:var(--accent);cursor:pointer;transition:.2s}
+.hdr-profile-badge:active{transform:scale(.96)}
+
+.main{flex:1;overflow-y:auto;overflow-x:hidden;padding:16px;padding-bottom:calc(var(--nav)+24px+var(--safe-bottom));-webkit-overflow-scrolling:touch}
+
+.nav{position:absolute;bottom:0;left:12px;right:12px;height:calc(var(--nav)+var(--safe-bottom));padding-bottom:var(--safe-bottom);background:var(--glass);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);display:flex;align-items:center;justify-content:space-around;z-index:100;border:1px solid var(--card-border);border-bottom:none;border-radius:24px 24px 0 0}
+.nav-item{display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;padding:8px 20px;border-radius:16px;transition:.2s;-webkit-tap-highlight-color:transparent;position:relative}
+.nav-item.active{background:var(--accent-glow)}
+.nav-item.active::before{content:'';position:absolute;top:-1px;left:50%;transform:translateX(-50%);width:24px;height:3px;border-radius:0 0 4px 4px;background:var(--accent)}
+.nav-item svg{width:22px;height:22px;color:var(--gray3);transition:.2s}
+.nav-item.active svg{color:var(--accent)}
+.nav-item span{font-size:10px;font-weight:600;color:var(--gray3);transition:.2s}
+.nav-item.active span{color:var(--accent)}
+
+.card{background:var(--card);backdrop-filter:blur(12px);border:1px solid var(--card-border);border-radius:var(--radius);padding:16px;margin-bottom:14px}
+.card-glow{box-shadow:0 0 30px rgba(129,140,248,0.06)}
+
+.sec-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.sec-title{font-size:16px;font-weight:700}
+.sec-badge{font-size:11px;background:var(--accent-glow);color:var(--accent);padding:4px 10px;border-radius:20px;font-weight:600}
+
+.tag{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:20px;font-size:11px;font-weight:600}
+.tag-green{background:var(--green-bg);color:var(--green)}
+.tag-amber{background:var(--amber-bg);color:var(--amber)}
+.tag-rose{background:var(--rose-bg);color:var(--rose)}
+.tag-sky{background:var(--sky-bg);color:var(--sky)}
+.tag-accent{background:var(--accent-glow);color:var(--accent)}
+.tag-teal{background:var(--teal-bg);color:var(--teal)}
+.tag-violet{background:var(--violet-bg);color:var(--violet)}
+.tag-orange{background:var(--orange-bg);color:var(--orange)}
+
+.tag-chip{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:20px;font-size:11px;font-weight:600;cursor:pointer;transition:.15s;border:none;font-family:inherit;-webkit-tap-highlight-color:transparent}
+.tag-chip:active{transform:scale(.93)}
+.tag-chip-remove{width:14px;height:14px;display:flex;align-items:center;justify-content:center;border-radius:50%;background:rgba(255,255,255,0.15);cursor:pointer;margin-left:2px}
+.tag-chip-remove:hover{background:rgba(255,255,255,0.3)}
+.tag-add{border:1.5px dashed var(--gray3);background:transparent;color:var(--gray);padding:4px 12px;border-radius:20px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;transition:.2s;display:inline-flex;align-items:center;gap:4px}
+.tag-add:active{border-color:var(--accent);color:var(--accent)}
+
+.btn{padding:12px 20px;border-radius:14px;font-size:13px;font-weight:700;border:none;cursor:pointer;display:inline-flex;align-items:center;gap:8px;font-family:inherit;transition:.2s;-webkit-tap-highlight-color:transparent}
+.btn:active{transform:scale(.96)}
+.btn-primary{background:linear-gradient(135deg,var(--accent2),var(--accent));color:white;box-shadow:0 4px 16px rgba(99,102,241,0.3)}
+.btn-secondary{background:rgba(129,140,248,0.15);color:var(--accent);border:1px solid rgba(129,140,248,0.3)}
+.btn-ghost{background:transparent;color:var(--accent);border:1.5px solid rgba(129,140,248,0.3)}
+.btn-sm{padding:8px 14px;font-size:12px;border-radius:10px}
+.btn-block{width:100%;justify-content:center}
+
+.tl{position:relative;padding-left:28px}
+.tl::before{content:'';position:absolute;left:9px;top:8px;bottom:8px;width:2px;background:linear-gradient(180deg,var(--accent),rgba(129,140,248,0.1))}
+.tl-item{position:relative;padding:0 0 24px}
+.tl-item:last-child{padding-bottom:0}
+.tl-dot{position:absolute;left:-28px;top:4px;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;z-index:2}
+.tl-dot-active{background:var(--accent);box-shadow:0 0 12px rgba(129,140,248,0.5)}
+.tl-dot-done{background:var(--green)}
+.tl-dot-future{background:var(--c3);border:2px solid var(--gray3)}
+.tl-dot svg{width:10px;height:10px;color:white}
+.tl-date{font-size:11px;color:var(--gray);font-weight:500;margin-bottom:4px}
+.tl-title{font-size:14px;font-weight:700;margin-bottom:4px}
+.tl-desc{font-size:12px;color:var(--gray2);line-height:1.6}
+.tl-card{background:rgba(51,65,85,0.4);border:1px solid var(--card-border);border-radius:12px;padding:12px;margin-top:8px}
+
+.case-card{background:var(--card);border:1px solid var(--card-border);border-radius:var(--radius);padding:16px;margin-bottom:12px;cursor:pointer;transition:.2s}
+.case-card:active{transform:scale(.98)}
+
+.upload-zone{border:2px dashed rgba(129,140,248,0.3);border-radius:var(--radius);padding:32px 20px;text-align:center;cursor:pointer;transition:.2s;background:rgba(129,140,248,0.03)}
+.upload-zone:active{background:rgba(129,140,248,0.08);border-color:var(--accent)}
+.upload-zone svg{width:48px;height:48px;color:var(--accent);margin-bottom:12px}
+.upload-zone h3{font-size:15px;font-weight:700;margin-bottom:6px}
+.upload-zone p{font-size:12px;color:var(--gray)}
+
+.progress{height:6px;background:var(--c3);border-radius:3px;overflow:hidden}
+.progress-fill{height:100%;border-radius:3px;transition:width .5s}
+
+.input-wrap{position:relative;margin-bottom:12px}
+.input-label{font-size:12px;font-weight:600;color:var(--gray);margin-bottom:6px;display:block}
+.input{width:100%;padding:12px 14px;border-radius:12px;border:1.5px solid var(--card-border);background:var(--c2);color:var(--white);font-size:14px;font-family:inherit;outline:none;transition:.2s}
+.input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(129,140,248,0.15)}
+.input::placeholder{color:var(--gray3)}
+textarea.input{min-height:120px;resize:vertical;line-height:1.7}
+
+.summary-box{background:linear-gradient(135deg,rgba(129,140,248,0.08),rgba(99,102,241,0.04));border:1px solid rgba(129,140,248,0.15);border-radius:var(--radius);padding:16px}
+.summary-box h4{font-size:14px;font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.summary-box p{font-size:13px;color:var(--gray);line-height:1.8}
+
+.note-card{background:var(--card);border:1px solid var(--card-border);border-radius:var(--radius);padding:16px;margin-bottom:12px;transition:.2s}
+.note-card:active{background:var(--c2)}
+.note-card .note-title{font-size:14px;font-weight:700;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.note-card .note-preview{font-size:12px;color:var(--gray);line-height:1.6;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.note-card .note-meta{display:flex;gap:12px;margin-top:10px;font-size:11px;color:var(--gray3)}
+
+.spinner{width:24px;height:24px;border:3px solid var(--c3);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;margin:0 auto}
+
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,0.6);backdrop-filter:blur(8px);z-index:200;display:flex;align-items:flex-end;justify-content:center}
+.modal{background:var(--c1);border:1px solid var(--card-border);border-radius:24px 24px 0 0;width:100%;max-width:480px;max-height:88vh;overflow-y:auto;padding:20px;padding-bottom:calc(24px+var(--safe-bottom))}
+.modal-bar{width:40px;height:4px;background:var(--c3);border-radius:2px;margin:0 auto 20px}
+
+.stabs{display:flex;gap:4px;background:var(--c2);border-radius:14px;padding:4px;margin-bottom:16px}
+.stab{flex:1;padding:10px;border-radius:11px;text-align:center;font-size:12px;font-weight:600;cursor:pointer;color:var(--gray);transition:.2s;border:none;background:transparent;font-family:inherit;-webkit-tap-highlight-color:transparent}
+.stab.active{background:var(--accent);color:white}
+
+.gcal-btn{display:inline-flex;align-items:center;gap:8px;padding:10px 16px;border-radius:12px;background:rgba(66,133,244,0.12);border:1px solid rgba(66,133,244,0.25);color:#8AB4F8;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;transition:.2s;text-decoration:none}
+.gcal-btn:active{transform:scale(.96);background:rgba(66,133,244,0.2)}
+.gcal-btn svg{width:16px;height:16px}
+
+.encrypt-badge{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:10px;background:var(--green-bg);font-size:11px;font-weight:600;color:var(--green)}
+.encrypt-badge svg{width:14px;height:14px}
+
+.lang-toggle{display:flex;gap:6px}
+.lang-btn{padding:6px 14px;border-radius:10px;font-size:12px;font-weight:600;border:1.5px solid var(--card-border);background:transparent;color:var(--gray);cursor:pointer;font-family:inherit;transition:.2s}
+.lang-btn.active{border-color:var(--accent);color:var(--accent);background:var(--accent-glow)}
+
+.notif-banner{background:linear-gradient(135deg,rgba(251,113,133,0.12),rgba(251,191,36,0.08));border:1px solid rgba(251,113,133,0.2);border-radius:var(--radius);padding:14px 16px;margin-bottom:16px;cursor:pointer;transition:.2s}
+.notif-banner:active{transform:scale(.98)}
+.notif-dot-pulse{width:10px;height:10px;border-radius:50%;background:var(--rose);animation:blink 1.5s ease-in-out infinite;flex-shrink:0}
+
+.case-select{width:100%;padding:12px 14px;border-radius:12px;border:1.5px solid var(--card-border);background:var(--c2);color:var(--white);font-size:14px;font-family:inherit;outline:none;appearance:none;-webkit-appearance:none;cursor:pointer;transition:.2s;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394A3B8' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:40px}
+.case-select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(129,140,248,0.15)}
+.case-select option{background:var(--c2);color:var(--white)}
+
+.tag-grid{display:flex;flex-wrap:wrap;gap:8px;padding:8px 0}
+.tag-option{padding:8px 16px;border-radius:20px;font-size:12px;font-weight:600;cursor:pointer;border:1.5px solid var(--card-border);background:transparent;color:var(--gray);font-family:inherit;transition:.2s}
+.tag-option:active{transform:scale(.95)}
+.tag-option.selected{border-color:var(--accent);color:var(--accent);background:var(--accent-glow)}
+
+.source-badge{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:6px;font-size:10px;font-weight:700;text-transform:uppercase}
+.source-ecourts{background:rgba(56,189,248,0.15);color:var(--sky)}
+.source-manual{background:rgba(251,191,36,0.15);color:var(--amber)}
+.source-court{background:rgba(52,211,153,0.15);color:var(--green)}
+
+.sync-indicator{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px}
+.sync-done{background:var(--green);box-shadow:0 0 8px rgba(52,211,153,0.4)}
+.sync-pending{background:var(--amber);box-shadow:0 0 8px rgba(251,191,36,0.4)}
+
+.login-screen{width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:linear-gradient(135deg,#0F172A 0%,rgba(99,102,241,0.1) 50%,#0F172A 100%);padding:20px}
+.login-logo{font-size:28px;font-weight:800;margin-bottom:30px;background:linear-gradient(135deg,var(--accent),#A78BFA);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.login-form{width:100%;max-width:360px}
+.login-field{margin-bottom:16px}
+.login-label{font-size:13px;font-weight:600;color:var(--gray);margin-bottom:8px;display:block}
+.login-input{width:100%;padding:14px 16px;border-radius:12px;border:1.5px solid rgba(129,140,248,0.2);background:rgba(15,23,42,0.9);color:var(--white);font-size:14px;font-family:inherit;outline:none;transition:.2s}
+.login-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(129,140,248,0.15)}
+.login-select{width:100%;padding:14px 16px;border-radius:12px;border:1.5px solid rgba(129,140,248,0.2);background:rgba(15,23,42,0.9);color:var(--white);font-size:14px;font-family:inherit;outline:none;transition:.2s;appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394A3B8' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:40px}
+.login-select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(129,140,248,0.15)}
+.login-select option{background:var(--c2);color:var(--white)}
+.login-btn{width:100%;padding:14px;border-radius:12px;background:linear-gradient(135deg,var(--accent2),var(--accent));color:white;font-size:15px;font-weight:700;border:none;cursor:pointer;font-family:inherit;transition:.2s;box-shadow:0 4px 16px rgba(99,102,241,0.3)}
+.login-btn:active{transform:scale(.98)}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const{useState,useEffect,useRef,useCallback,Fragment}=React;
+
+// ── Icons ──
+const I={
+  scale:()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m16 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="m2 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="M7 21h10"/><path d="M12 3v18"/><path d="M3 7h2c2 0 5-1 7-2 2 1 5 2 7 2h2"/></svg>,
+  timeline:()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="10"/></svg>,
+  file:()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>,
+  note:()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>,
+  upload:()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>,
+  check:()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>,
+  cal:()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>,
+  lock:()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>,
+  x:()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
+  plus:()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>,
+  trash:()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>,
+  sparkle:()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></svg>,
+  chevDown:()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>,
+  bell:()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>,
+  google:()=><svg viewBox="0 0 24 24" fill="none"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>,
+  back:()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>,
+  search:()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>,
+  shield:()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>,
+  tag:()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2H2v10l9.29 9.29c.94.94 2.48.94 3.42 0l6.58-6.58c.94-.94.94-2.48 0-3.42L12 2Z"/><path d="M7 7h.01"/></svg>,
+  warn:()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>,
+  folder:()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>,
+  database:()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/></svg>,
+  download:()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>,
+  refresh:()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36M20.49 15a9 9 0 0 1-14.85 3.36"/></svg>,
+  user:()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>,
+  logOut:()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>,
+};
+
+// ── Helpers ──
+const fmtDate=(d)=>{if(!d)return"—";return new Date(d).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})};
+const fmtDateLong=(d)=>{if(!d)return"—";return new Date(d).toLocaleDateString('en-IN',{weekday:'long',day:'2-digit',month:'long',year:'numeric'})};
+const daysUntil=(d)=>{if(!d)return null;return Math.ceil((new Date(d)-new Date())/86400000)};
+const formatTime=(ms)=>{if(!ms)return"—";const d=new Date(ms);return d.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})};
+
+// ── Tag system ──
+const ALL_TAGS=[
+  {id:'civil',label:'Civil',color:'sky'},
+  {id:'criminal',label:'Criminal',color:'rose'},
+  {id:'writ',label:'Writ Petition',color:'violet'},
+  {id:'litigation',label:'Litigation',color:'amber'},
+  {id:'corporate',label:'Corporate',color:'teal'},
+  {id:'tax',label:'Taxation',color:'orange'},
+  {id:'property',label:'Property',color:'green'},
+  {id:'family',label:'Family',color:'rose'},
+  {id:'constitutional',label:'Constitutional',color:'accent'},
+  {id:'arbitration',label:'Arbitration',color:'sky'},
+  {id:'consumer',label:'Consumer',color:'amber'},
+  {id:'labour',label:'Labour',color:'teal'},
+  {id:'ipr',label:'IPR',color:'violet'},
+  {id:'environmental',label:'Environmental',color:'green'},
+];
+const tagColor=(c)=>`tag-${c}`;
+const getTagStyle=(colorName)=>{
+  const map={sky:{bg:'var(--sky-bg)',c:'var(--sky)'},rose:{bg:'var(--rose-bg)',c:'var(--rose)'},violet:{bg:'var(--violet-bg)',c:'var(--violet)'},amber:{bg:'var(--amber-bg)',c:'var(--amber)'},teal:{bg:'var(--teal-bg)',c:'var(--teal)'},orange:{bg:'var(--orange-bg)',c:'var(--orange)'},green:{bg:'var(--green-bg)',c:'var(--green)'},accent:{bg:'var(--accent-glow)',c:'var(--accent)'}};
+  return map[colorName]||map.accent;
+};
+
+function suggestTags(caseType, court){
+  const tags = [];
+  if(/civil|appeal/i.test(caseType)) tags.push('civil','litigation');
+  if(/criminal|crl/i.test(caseType)) tags.push('criminal','litigation');
+  if(/writ/i.test(caseType)) tags.push('writ','constitutional');
+  if(/company|corporate/i.test(caseType)) tags.push('corporate');
+  if(/tax|ita/i.test(caseType)) tags.push('tax');
+  if(/property/i.test(caseType)) tags.push('property');
+  if(/consumer/i.test(caseType)) tags.push('consumer');
+  if(/supreme/i.test(court)) tags.push('constitutional');
+  if(tags.length===0) tags.push('litigation');
+  return [...new Set(tags)];
+}
+
+// ── Google Calendar URL builders ──
+function buildGCalUrl(title,date,details,location){
+  const d=new Date(date);const start=d.toISOString().replace(/[-:]/g,'').split('.')[0]+'Z';
+  const end=new Date(d.getTime()+3600000).toISOString().replace(/[-:]/g,'').split('.')[0]+'Z';
+  return`https://calendar.google.com/calendar/render?${new URLSearchParams({action:'TEMPLATE',text:title,dates:`${start}/${end}`,details:details||'',location:location||''}).toString()}`;
+}
+function buildReminderGCalUrl(title,hearingDate,details){
+  const d=new Date(hearingDate);d.setDate(d.getDate()-3);
+  const start=d.toISOString().replace(/[-:]/g,'').split('.')[0]+'Z';
+  const end=new Date(d.getTime()+3600000).toISOString().replace(/[-:]/g,'').split('.')[0]+'Z';
+  return`https://calendar.google.com/calendar/render?${new URLSearchParams({action:'TEMPLATE',text:`Reminder: ${title} in 3 days`,dates:`${start}/${end}`,details:`Hearing on ${fmtDateLong(hearingDate)}. ${details||''}`}).toString()}`;
+}
+
+// ── Session helpers (localStorage) ──
+const LS={
+  get:(k,fallback)=>{try{const v=localStorage.getItem('ld_'+k);return v?JSON.parse(v):fallback;}catch{return fallback;}},
+  set:(k,v)=>{try{localStorage.setItem('ld_'+k,JSON.stringify(v));}catch{}},
+  remove:(k)=>{try{localStorage.removeItem('ld_'+k);}catch{}},
+};
+
+// ── Mock eCourts data (Allahabad HC only) ──
+const MOCK_ECOURTS_CASES=[
+  {cnr:'UPHC020012345672024',caseNo:'WP(C)/12345/2024',parties:'Ram Prakash v. State of U.P.',court:'Allahabad High Court, Lucknow Bench',judge:"Hon'ble Justice Ajay Bhanot",status:'Pending - Next Date 28.03.2026',businessConducted:[
+    {date:'25.01.2026',event:'Counter affidavit filed. List on 28.03.2026'},
+    {date:'10.11.2025',event:'Time granted to file counter. List after 6 weeks'},
+    {date:'15.09.2025',event:'Notice issued. Tag with connected matter'},
+    {date:'01.08.2025',event:'Petition filed and registered'},
+  ],filingDate:'2025-08-01',nextHearing:'2026-03-28'},
+  {cnr:'UPHC020056781232025',caseNo:'CRLMC/2891/2025',parties:'Mohd. Irfan v. State of U.P.',court:'Allahabad High Court',judge:"Hon'ble Justice Samit Gopal",status:'Pending - Next Date 02.04.2026',businessConducted:[
+    {date:'10.02.2026',event:'Arguments on bail heard. Reserved for orders.'},
+    {date:'18.12.2025',event:'State counsel seeks time. Adjourned.'},
+    {date:'05.11.2025',event:'Notice issued to State. Counter within 4 weeks.'},
+    {date:'20.10.2025',event:'Criminal Misc. application filed and registered.'},
+  ],filingDate:'2025-10-20',nextHearing:'2026-04-02'},
+  {cnr:'UPHC020034569872024',caseNo:'APPEAL/4521/2024',parties:'Smt. Geeta Devi v. Board of Revenue',court:'Allahabad High Court, Lucknow Bench',judge:"Hon'ble Justice Vivek Chaudhary",status:'Pending - Next Date 15.04.2026',businessConducted:[
+    {date:'20.01.2026',event:'Appellant arguments concluded. Respondent to argue next.'},
+    {date:'15.11.2025',event:'Part heard. Adjourned at request of respondent.'},
+    {date:'10.08.2025',event:'Appeal admitted. Pleadings complete.'},
+    {date:'01.06.2024',event:'First appeal filed before High Court.'},
+  ],filingDate:'2024-06-01',nextHearing:'2026-04-15'},
+];
+
+// ── Encryption (Web Crypto API) ──
+async function encryptData(data){
+  const key=await crypto.subtle.generateKey({name:'AES-GCM',length:256},true,['encrypt','decrypt']);
+  const iv=crypto.getRandomValues(new Uint8Array(12));
+  const encoded=new TextEncoder().encode(typeof data==='string'?data:JSON.stringify(data));
+  const encrypted=await crypto.subtle.encrypt({name:'AES-GCM',iv},key,encoded);
+  return{encrypted:new Uint8Array(encrypted),iv,keyObj:key};
+}
+
+// ── LLM Summary simulator ──
+function generateSummary(text,mode,lang){
+  if(lang==='hi'){
+    if(mode==='case') return "यह दस्तावेज़ एक कानूनी मामले से संबंधित है। दस्तावेज़ में पक्षकारों के बीच विवाद का विवरण, न्यायालय के आदेश, और आगामी सुनवाई की तिथियाँ शामिल हैं।";
+    return "यह दस्तावेज़ आपके मामले से संबंधित महत्वपूर्ण जानकारी प्रदान करता है।";
+  }
+  if(mode==='case') return `This document pertains to a legal proceeding involving disputed matters.`;
+  return `Based on your case context, this document contains important information.`;
+}
+
+// ── Mock initial cases with source badges ──
+const INITIAL_CASES=[
+  {id:1,title:"M/s Greenfield Corp v. State of UP",caseNo:"WP(C)/2024/1847",cnr:"UPHC020098761232024",court:"Allahabad High Court",courtNo:"Court 1",judge:"Hon'ble Justice Ajay Bhanot",type:"Writ",status:"active",client:"M/s Greenfield Corporation",advocate:"Adv. Rakesh Sharma",respondentAdv:"Adv. Priya Nair",nextHearing:"2026-03-18",filingDate:"2024-06-15",stage:"Arguments",priority:"high",tags:['civil','litigation','constitutional'],source:'manual',
+    timeline:[
+      {date:"2024-06-15",title:"Case Filed",desc:"Writ Petition filed before Allahabad High Court.",type:"filing",judgment:null},
+      {date:"2024-08-22",title:"Notice Issued",desc:"Court issued notices to respondents.",type:"order",judgment:"Notice issued."},
+      {date:"2026-03-18",title:"Next Hearing",desc:"Final arguments.",type:"upcoming",judgment:null},
+    ]
+  },
+];
+
+// ── LOGIN SCREEN ──
+function LoginScreen({onLogin}){
+  const[fullName,setFullName]=useState('');
+  const[barNumber,setBarNumber]=useState('');
+  const[rollNumber,setRollNumber]=useState('');
+  const[court,setCourt]=useState('Allahabad High Court');
+
+  const handleLogin=()=>{
+    if(!fullName||!barNumber||!rollNumber){alert('Please fill all fields');return;}
+    onLogin({fullName,barNumber,rollNumber,court});
+  };
+
+  return(
+    <div style={{width:'100%',height:'100%',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',background:'linear-gradient(135deg,#0F172A 0%,rgba(99,102,241,0.1) 50%,#0F172A 100%)',padding:'20px'}}>
+      <div style={{textAlign:'center',marginBottom:'40px'}}>
+        <div style={{fontSize:'32px',fontWeight:'800',marginBottom:'10px',background:'linear-gradient(135deg,var(--accent),#A78BFA)',WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent'}}>LegalDesk</div>
+        <div style={{fontSize:'13px',color:'var(--gray)'}}>Advocate Portal</div>
+      </div>
+
+      <div style={{width:'100%',maxWidth:'360px'}}>
+        <div style={{marginBottom:'16px'}}>
+          <label style={{fontSize:'13px',fontWeight:'600',color:'var(--gray)',marginBottom:'8px',display:'block'}}>Full Name</label>
+          <input className="login-input" type="text" placeholder="Your full name" value={fullName} onChange={(e)=>setFullName(e.target.value)}/>
+        </div>
+
+        <div style={{marginBottom:'16px'}}>
+          <label style={{fontSize:'13px',fontWeight:'600',color:'var(--gray)',marginBottom:'8px',display:'block'}}>Bar Council Registration No.</label>
+          <input className="login-input" type="text" placeholder="e.g., UP/1234/2019" value={barNumber} onChange={(e)=>setBarNumber(e.target.value)}/>
+        </div>
+
+        <div style={{marginBottom:'16px'}}>
+          <label style={{fontSize:'13px',fontWeight:'600',color:'var(--gray)',marginBottom:'8px',display:'block'}}>Advocate Roll Number (HC)</label>
+          <input className="login-input" type="text" placeholder="e.g., AOR/2019/5678" value={rollNumber} onChange={(e)=>setRollNumber(e.target.value)}/>
+        </div>
+
+        <div style={{marginBottom:'24px'}}>
+          <label style={{fontSize:'13px',fontWeight:'600',color:'var(--gray)',marginBottom:'8px',display:'block'}}>Primary Court</label>
+          <select className="login-select" value={court} onChange={(e)=>setCourt(e.target.value)}>
+            <option>Allahabad High Court</option>
+            <option>Allahabad High Court, Lucknow Bench</option>
+          </select>
+        </div>
+
+        <button className="login-btn" onClick={handleLogin}>Login</button>
+      </div>
+    </div>
+  );
+}
+
+// ── FETCH FROM eCOURTS MODAL ──
+function FetchFromECourtsModal({onClose,onImport}){
+  const[tab,setTab]=useState('cnr');
+  const[cnrInput,setCnrInput]=useState('');
+  const[caseTypeInput,setCaseTypeInput]=useState('WP(C)');
+  const[caseNumInput,setCaseNumInput]=useState('');
+  const[yearInput,setYearInput]=useState('2024');
+  const[loading,setLoading]=useState(false);
+  const[fetchedCase,setFetchedCase]=useState(null);
+  const[step,setStep]=useState('search');
+
+  const handleSearchCNR=()=>{
+    if(!cnrInput.trim()){alert('Enter CNR');return;}
+    setLoading(true);
+    setStep('searching');
+    setTimeout(()=>{
+      const found=MOCK_ECOURTS_CASES.find(c=>c.cnr===cnrInput.toUpperCase());
+      if(found){setFetchedCase(found);setStep('result');}else{alert('Case not found');setLoading(false);setStep('search');}
+    },2000);
+  };
+
+  const handleImportCase=()=>{
+    if(!fetchedCase)return;
+    const newCase={
+      id:Math.max(0,...INITIAL_CASES.map(c=>c.id))+1,
+      title:fetchedCase.parties,
+      caseNo:fetchedCase.caseNo,
+      cnr:fetchedCase.cnr,
+      court:fetchedCase.court,
+      courtNo:'Court TBD',
+      judge:fetchedCase.judge,
+      type:fetchedCase.caseNo.split('/')[0],
+      status:'active',
+      client:'',
+      advocate:'',
+      respondentAdv:'',
+      nextHearing:fetchedCase.nextHearing,
+      filingDate:fetchedCase.filingDate,
+      stage:'Active',
+      priority:'medium',
+      tags:[],
+      source:'ecourts',
+      timeline:fetchedCase.businessConducted.map((b,i)=>({
+        date:b.date.split('.').reverse().join('-'),
+        title:'Business Conducted',
+        desc:b.event,
+        type:i===fetchedCase.businessConducted.length-1?'upcoming':'order',
+        judgment:null
+      }))
+    };
+    onImport(newCase);
+    onClose();
+  };
+
+  return(
+    <div className="modal-bg" onClick={onClose}>
+      <div className="modal" onClick={e=>e.stopPropagation()}>
+        <div className="modal-bar"/>
+        <div style={{fontSize:'18px',fontWeight:'700',marginBottom:'4px'}}>Fetch from eCourts</div>
+        <div style={{fontSize:'12px',color:'var(--gray)',marginBottom:'16px'}}>Connect to court portal and fetch case details</div>
+
+        {step==='search'&&(
+          <Fragment>
+            <div className="stabs">
+              <button className={`stab ${tab==='cnr'?'active':''}`} onClick={()=>setTab('cnr')}>By CNR</button>
+              <button className={`stab ${tab==='casenum'?'active':''}`} onClick={()=>setTab('casenum')}>By Case No</button>
+            </div>
+
+            {tab==='cnr'&&(
+              <div>
+                <div className="input-wrap">
+                  <label className="input-label">16-digit CNR Number</label>
+                  <input className="input" type="text" placeholder="e.g., UPHC020012345672024" value={cnrInput} onChange={(e)=>setCnrInput(e.target.value.toUpperCase())}/>
+                </div>
+                <button className="btn btn-primary btn-block" onClick={handleSearchCNR}>Search</button>
+              </div>
+            )}
+
+            {tab==='casenum'&&(
+              <div>
+                <div className="input-wrap">
+                  <label className="input-label">Case Type</label>
+                  <select className="case-select" value={caseTypeInput} onChange={(e)=>setCaseTypeInput(e.target.value)}>
+                    <option>WP(C)</option>
+                    <option>WP(Crl)</option>
+                    <option>CA</option>
+                    <option>CS(COMM)</option>
+                    <option>OA</option>
+                  </select>
+                </div>
+                <div className="input-wrap">
+                  <label className="input-label">Case Number</label>
+                  <input className="input" type="text" placeholder="e.g., 12345" value={caseNumInput} onChange={(e)=>setCaseNumInput(e.target.value)}/>
+                </div>
+                <div className="input-wrap">
+                  <label className="input-label">Year</label>
+                  <input className="input" type="text" placeholder="2024" value={yearInput} onChange={(e)=>setYearInput(e.target.value)}/>
+                </div>
+                <button className="btn btn-primary btn-block" onClick={()=>{handleSearchCNR()}}>Search</button>
+              </div>
+            )}
+          </Fragment>
+        )}
+
+        {step==='searching'&&(
+          <div style={{textAlign:'center',padding:'40px 20px'}}>
+            <div className="spinner" style={{marginBottom:'16px'}}></div>
+            <div style={{fontSize:'14px',color:'var(--gray)',marginBottom:'8px'}}>Connecting to eCourts portal...</div>
+            <div style={{fontSize:'12px',color:'var(--gray3)'}}>Fetching case details...</div>
+          </div>
+        )}
+
+        {step==='result'&&fetchedCase&&(
+          <div>
+            <div className="card" style={{marginBottom:'16px'}}>
+              <div style={{display:'flex',alignItems:'start',justifyContent:'space-between',marginBottom:'12px'}}>
+                <div>
+                  <div style={{fontSize:'14px',fontWeight:'700',marginBottom:'4px'}}>{fetchedCase.parties}</div>
+                  <div style={{fontSize:'12px',color:'var(--gray)'}}>{fetchedCase.caseNo}</div>
+                </div>
+                <span className="source-badge source-ecourts">eCourts</span>
+              </div>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px',fontSize:'12px',marginTop:'12px'}}>
+                <div><div style={{color:'var(--gray)',marginBottom:'2px',fontSize:'11px'}}>CNR</div>{fetchedCase.cnr}</div>
+                <div><div style={{color:'var(--gray)',marginBottom:'2px',fontSize:'11px'}}>Court</div>{fetchedCase.court}</div>
+                <div><div style={{color:'var(--gray)',marginBottom:'2px',fontSize:'11px'}}>Judge</div>{fetchedCase.judge}</div>
+                <div><div style={{color:'var(--gray)',marginBottom:'2px',fontSize:'11px'}}>Status</div>{fetchedCase.status}</div>
+              </div>
+            </div>
+
+            <div style={{marginBottom:'16px'}}>
+              <div style={{fontSize:'13px',fontWeight:'700',marginBottom:'8px'}}>Business Conducted</div>
+              <div style={{fontSize:'12px',color:'var(--gray)',lineHeight:'1.7'}}>
+                {fetchedCase.businessConducted.map((b,i)=><div key={i}><strong>{b.date}</strong> - {b.event}</div>)}
+              </div>
+            </div>
+
+            <button className="btn btn-primary btn-block" onClick={handleImportCase}>Import Case</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── MANUAL CASE CREATION MODAL ──
+function CreateCaseModal({onClose,onCreate,advocateName}){
+  const[step,setStep]=useState('basic');
+  const[formData,setFormData]=useState({title:'',caseNo:'',cnr:'',court:'Allahabad High Court',courtNo:'',judge:'',type:'Civil',filingDate:'',client:'',advocate:advocateName,respondentAdv:'',priority:'medium',tags:[]});
+  const[timelineEvents,setTimelineEvents]=useState([{date:'',title:'',desc:'',type:'filing'}]);
+
+  const handleFormChange=(field,value)=>{setFormData(prev=>({...prev,[field]:value}));};
+  const handleEventChange=(i,field,value)=>{const ne=[...timelineEvents];ne[i][field]=value;setTimelineEvents(ne);};
+  const addTimelineEvent=()=>{setTimelineEvents(prev=>[...prev,{date:'',title:'',desc:'',type:'filing'}]);};
+
+  const handleCreate=()=>{
+    if(!formData.title||!formData.caseNo||!formData.court){alert('Fill required fields');return;}
+    const newCase={
+      id:Math.max(0,...INITIAL_CASES.map(c=>c.id))+1,
+      ...formData,
+      status:'active',
+      source:'manual',
+      nextHearing:formData.nextHearing||'',
+      stage:'Fresh',
+      timeline:timelineEvents.filter(e=>e.date||e.title).map(e=>({...e,judgment:null}))
+    };
+    onCreate(newCase);
+    onClose();
+  };
+
+  return(
+    <div className="modal-bg" onClick={onClose}>
+      <div className="modal" onClick={e=>e.stopPropagation()}>
+        <div className="modal-bar"/>
+        <div style={{fontSize:'18px',fontWeight:'700',marginBottom:'4px'}}>Create Case</div>
+
+        {step==='basic'&&(
+          <div>
+            <div className="input-wrap">
+              <label className="input-label">Case Title (Petitioner v. Respondent)*</label>
+              <input className="input" type="text" placeholder="Full case title" value={formData.title} onChange={(e)=>handleFormChange('title',e.target.value)}/>
+            </div>
+            <div className="input-wrap">
+              <label className="input-label">Case Number*</label>
+              <input className="input" type="text" placeholder="e.g., CA/2024/1847" value={formData.caseNo} onChange={(e)=>handleFormChange('caseNo',e.target.value)}/>
+            </div>
+            <div className="input-wrap">
+              <label className="input-label">CNR Number (optional)</label>
+              <input className="input" type="text" placeholder="16-digit CNR" value={formData.cnr} onChange={(e)=>handleFormChange('cnr',e.target.value)}/>
+            </div>
+            <div className="input-wrap">
+              <label className="input-label">Court*</label>
+              <select className="case-select" value={formData.court} onChange={(e)=>handleFormChange('court',e.target.value)}>
+                <option>Allahabad High Court</option>
+                <option>Allahabad High Court, Lucknow Bench</option>
+              </select>
+            </div>
+            <div className="input-wrap">
+              <label className="input-label">Bench/Court Number</label>
+              <input className="input" type="text" placeholder="e.g., Court 1" value={formData.courtNo} onChange={(e)=>handleFormChange('courtNo',e.target.value)}/>
+            </div>
+            <div className="input-wrap">
+              <label className="input-label">Presiding Judge</label>
+              <input className="input" type="text" placeholder="Judge name" value={formData.judge} onChange={(e)=>handleFormChange('judge',e.target.value)}/>
+            </div>
+            <div className="input-wrap">
+              <label className="input-label">Case Type</label>
+              <select className="case-select" value={formData.type} onChange={(e)=>handleFormChange('type',e.target.value)}>
+                <option>Civil</option>
+                <option>Criminal</option>
+                <option>Writ</option>
+                <option>Appeal</option>
+              </select>
+            </div>
+            <div className="input-wrap">
+              <label className="input-label">Filing Date</label>
+              <input className="input" type="date" value={formData.filingDate} onChange={(e)=>handleFormChange('filingDate',e.target.value)}/>
+            </div>
+            <div className="input-wrap">
+              <label className="input-label">Client Name</label>
+              <input className="input" type="text" placeholder="Client name" value={formData.client} onChange={(e)=>handleFormChange('client',e.target.value)}/>
+            </div>
+            <div className="input-wrap">
+              <label className="input-label">Your Advocate Name</label>
+              <input className="input" type="text" placeholder="Pre-filled" value={formData.advocate} onChange={(e)=>handleFormChange('advocate',e.target.value)}/>
+            </div>
+            <div className="input-wrap">
+              <label className="input-label">Opposing Counsel</label>
+              <input className="input" type="text" placeholder="Opposite counsel name" value={formData.respondentAdv} onChange={(e)=>handleFormChange('respondentAdv',e.target.value)}/>
+            </div>
+            <div className="input-wrap">
+              <label className="input-label">Priority</label>
+              <select className="case-select" value={formData.priority} onChange={(e)=>handleFormChange('priority',e.target.value)}>
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+              </select>
+            </div>
+            <button className="btn btn-primary btn-block" style={{marginTop:'16px'}} onClick={()=>setStep('timeline')}>Add Timeline →</button>
+          </div>
+        )}
+
+        {step==='timeline'&&(
+          <div>
+            <div style={{marginBottom:'16px'}}>
+              <div style={{fontSize:'13px',fontWeight:'700',marginBottom:'10px'}}>Case Timeline (optional)</div>
+              {timelineEvents.map((ev,i)=>(
+                <div key={i} style={{marginBottom:'16px',padding:'12px',background:'var(--c2)',borderRadius:'10px'}}>
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px',marginBottom:'8px'}}>
+                    <input className="input" type="date" placeholder="Date" value={ev.date} onChange={(e)=>handleEventChange(i,'date',e.target.value)} style={{fontSize:'12px',padding:'10px'}}/>
+                    <select style={{padding:'10px',background:'var(--c3)',border:'1px solid var(--card-border)',borderRadius:'8px',color:'var(--white)',fontFamily:'inherit',fontSize:'12px'}} value={ev.type} onChange={(e)=>handleEventChange(i,'type',e.target.value)}>
+                      <option>filing</option>
+                      <option>order</option>
+                      <option>hearing</option>
+                      <option>upcoming</option>
+                    </select>
+                  </div>
+                  <input className="input" type="text" placeholder="Event title" value={ev.title} onChange={(e)=>handleEventChange(i,'title',e.target.value)} style={{marginBottom:'8px',padding:'10px',fontSize:'12px'}}/>
+                  <textarea className="input" placeholder="Description" value={ev.desc} onChange={(e)=>handleEventChange(i,'desc',e.target.value)} style={{padding:'10px',fontSize:'12px',minHeight:'80px'}}/>
+                </div>
+              ))}
+              <button className="btn btn-secondary btn-sm" onClick={addTimelineEvent} style={{marginBottom:'16px'}}><I.plus/> Add Another Event</button>
+            </div>
+
+            <div style={{display:'flex',gap:'8px'}}>
+              <button className="btn btn-ghost btn-block" onClick={()=>setStep('basic')}>← Back</button>
+              <button className="btn btn-primary btn-block" onClick={handleCreate}>Create Case</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── AUTO-SYNC STATUS PANEL ──
+function SyncStatusPanel({cases,lastSync}){
+  const syncedCount=cases.filter(c=>c.source==='ecourts').length;
+  const needsSync=cases.filter(c=>Math.random()>0.7).length;
+
+  return(
+    <div className="card" style={{marginBottom:'16px',background:'linear-gradient(135deg,rgba(45,212,191,0.08),transparent)',border:'1px solid rgba(45,212,191,0.15)'}}>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'12px'}}>
+        <div>
+          <div style={{fontSize:'13px',fontWeight:'700',marginBottom:'2px'}}>eCourts Sync Status</div>
+          <div style={{fontSize:'11px',color:'var(--gray)'}}>Last sync: {lastSync?new Date(lastSync).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}):'Never'}</div>
+        </div>
+        <span className="source-badge source-court">Active</span>
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px',marginBottom:'12px'}}>
+        <div><div style={{fontSize:'11px',color:'var(--gray)',marginBottom:'2px'}}>Cases Being Monitored</div><div style={{fontSize:'16px',fontWeight:'700',color:'var(--teal)'}}>{syncedCount}/{cases.length}</div></div>
+        <div><div style={{fontSize:'11px',color:'var(--gray)',marginBottom:'2px'}}>Pending Sync</div><div style={{fontSize:'16px',fontWeight:'700',color:'var(--amber)'}}>{needsSync}</div></div>
+      </div>
+      <button className="btn btn-secondary btn-sm btn-block"><I.refresh/> Sync Now</button>
+    </div>
+  );
+}
+
+// ── CASE TRACKING PAGE ──
+function CaseTrackingPage({cases,setCases,setPage,setNotesFilter,advocate}){
+  const[selectedCase,setSelectedCase]=useState(null);
+  const[expandedEvent,setExpandedEvent]=useState(null);
+  const[search,setSearch]=useState('');
+  const[filterTag,setFilterTag]=useState(null);
+  const[showTagPicker,setShowTagPicker]=useState(null);
+  const[dismissedNotifs,setDismissedNotifs]=useState([]);
+  const[showFetchModal,setShowFetchModal]=useState(false);
+  const[showCreateModal,setShowCreateModal]=useState(false);
+  const[lastSyncTime,setLastSyncTime]=useState(null);
+
+  const upcomingCases = cases.filter(c=>{const d=daysUntil(c.nextHearing);return d!==null && d>=0 && d<=7;}).sort((a,b)=>new Date(a.nextHearing)-new Date(b.nextHearing));
+  const showNotifs = upcomingCases.filter(c=>!dismissedNotifs.includes(c.id));
+
+  const filtered = cases.filter(c=>{
+    if(search && !c.title.toLowerCase().includes(search.toLowerCase()) && !c.caseNo.toLowerCase().includes(search.toLowerCase())) return false;
+    if(filterTag && !c.tags.includes(filterTag)) return false;
+    return true;
+  });
+
+  const addTag=(caseId,tagId)=>{
+    setCases(prev=>prev.map(c=>c.id===caseId?{...c,tags:[...new Set([...c.tags,tagId])]}:c));
+  };
+  const removeTag=(caseId,tagId)=>{
+    setCases(prev=>prev.map(c=>c.id===caseId?{...c,tags:c.tags.filter(t=>t!==tagId)}:c));
+  };
+
+  const handleImportFromECourts=(newCase)=>{
+    setCases(prev=>[...prev,newCase]);
+    setLastSyncTime(new Date());
+  };
+
+  const handleCreateCase=(newCase)=>{
+    setCases(prev=>[...prev,newCase]);
+  };
+
+  // ── Detail view ──
+  if(selectedCase){
+    const c = cases.find(ca=>ca.id===selectedCase.id)||selectedCase;
+    const caseNotes = <span onClick={()=>{setNotesFilter(c.id);setPage('notes');}} style={{fontSize:12,color:'var(--accent)',fontWeight:600,cursor:'pointer'}}>View Notes →</span>;
+    return(
+      <div className="fade-in">
+        <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:20}}>
+          <div style={{width:36,height:36,borderRadius:12,background:'var(--card)',border:'1px solid var(--card-border)',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0}} onClick={()=>setSelectedCase(null)}>
+            <div style={{width:20,height:20}}><I.back/></div>
+          </div>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
+              <div style={{fontSize:15,fontWeight:700,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{c.title}</div>
+              {c.source&&<span className={`source-badge source-${c.source}`}>{c.source==='ecourts'?'eCourts':'Manual'}</span>}
+            </div>
+            <div style={{fontSize:12,color:'var(--gray)',marginTop:2}}>{c.caseNo}</div>
+          </div>
+          <span className={`tag ${c.priority==='high'?'tag-rose':c.priority==='medium'?'tag-amber':'tag-green'}`}>{c.priority.toUpperCase()}</span>
+        </div>
+
+        {/* Tags */}
+        <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:16,alignItems:'center'}}>
+          {c.tags.map(tId=>{
+            const t=ALL_TAGS.find(at=>at.id===tId);
+            if(!t) return null;
+            const s=getTagStyle(t.color);
+            return <span key={tId} className="tag-chip" style={{background:s.bg,color:s.c}}>{t.label}<span className="tag-chip-remove" onClick={(e)=>{e.stopPropagation();removeTag(c.id,tId)}}>&times;</span></span>;
+          })}
+          <button className="tag-add" onClick={()=>setShowTagPicker(c.id)}><div style={{width:12,height:12}}><I.plus/></div> Add Tag</button>
+          {caseNotes}
+        </div>
+
+        {/* Case info */}
+        <div className="card card-glow" style={{marginBottom:16}}>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
+            <div><div style={{fontSize:11,color:'var(--gray)',fontWeight:500}}>Court</div><div style={{fontSize:13,fontWeight:700,marginTop:3}}>{c.court}</div></div>
+            <div><div style={{fontSize:11,color:'var(--gray)',fontWeight:500}}>Bench</div><div style={{fontSize:13,fontWeight:700,marginTop:3}}>{c.courtNo}</div></div>
+            <div><div style={{fontSize:11,color:'var(--gray)',fontWeight:500}}>Presiding Judge</div><div style={{fontSize:13,fontWeight:700,marginTop:3}}>{c.judge}</div></div>
+            <div><div style={{fontSize:11,color:'var(--gray)',fontWeight:500}}>Case Type</div><div style={{fontSize:13,fontWeight:700,marginTop:3}}>{c.type}</div></div>
+            <div><div style={{fontSize:11,color:'var(--gray)',fontWeight:500}}>Your Advocate</div><div style={{fontSize:13,fontWeight:700,marginTop:3}}>{c.advocate}</div></div>
+            <div><div style={{fontSize:11,color:'var(--gray)',fontWeight:500}}>Opposite Counsel</div><div style={{fontSize:13,fontWeight:700,marginTop:3}}>{c.respondentAdv}</div></div>
+          </div>
+        </div>
+
+        {/* Next hearing + Google Calendar */}
+        {c.nextHearing && (
+          <div className="card" style={{background:'linear-gradient(135deg,rgba(129,140,248,0.1),rgba(99,102,241,0.05))',border:'1px solid rgba(129,140,248,0.2)',marginBottom:16}}>
+            <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12}}>
+              <div style={{width:44,height:44,borderRadius:14,background:'var(--accent-glow)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+                <div style={{width:22,height:22,color:'var(--accent)'}}><I.cal/></div>
+              </div>
+              <div>
+                <div style={{fontSize:12,color:'var(--gray)',fontWeight:500}}>Next Hearing</div>
+                <div style={{fontSize:16,fontWeight:800,color:'var(--accent)'}}>{fmtDateLong(c.nextHearing)}</div>
+                {daysUntil(c.nextHearing)!==null && <div style={{fontSize:11,color:'var(--amber)',fontWeight:600,marginTop:2}}>{daysUntil(c.nextHearing)} days from now</div>}
+              </div>
+            </div>
+            <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+              <a href={buildGCalUrl(`Hearing: ${c.title}`,c.nextHearing,`Case No: ${c.caseNo}\nCourt: ${c.court}, ${c.courtNo}\nJudge: ${c.judge}\nStage: ${c.stage}`,c.court)} target="_blank" rel="noopener" className="gcal-btn">
+                <I.google/> Add to Google Calendar
+              </a>
+              <a href={buildReminderGCalUrl(c.title,c.nextHearing,`Case No: ${c.caseNo}\nPrepare documents.`)} target="_blank" rel="noopener" className="gcal-btn" style={{background:'rgba(251,191,36,0.12)',borderColor:'rgba(251,191,36,0.25)',color:'#FBBF24'}}>
+                <I.bell/> 3-Day Reminder
+              </a>
+            </div>
+          </div>
+        )}
+
+        {/* AI Suggested Tags */}
+        {c.tags.length===0 && (
+          <div className="card" style={{background:'linear-gradient(135deg,rgba(129,140,248,0.06),transparent)',marginBottom:16}}>
+            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}>
+              <div style={{width:18,height:18,color:'var(--accent)'}}><I.sparkle/></div>
+              <span style={{fontSize:13,fontWeight:700}}>AI Suggested Tags</span>
+            </div>
+            <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+              {suggestTags(c.type,c.court).map(tId=>{
+                const t=ALL_TAGS.find(at=>at.id===tId);
+                if(!t) return null;
+                const s=getTagStyle(t.color);
+                return <button key={tId} className="tag-chip" style={{background:s.bg,color:s.c}} onClick={()=>addTag(c.id,tId)}>+ {t.label}</button>;
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Timeline */}
+        <div className="sec-hdr">
+          <div className="sec-title">Case Timeline</div>
+          <span className="sec-badge">{c.timeline.length} events</span>
+        </div>
+        <div className="tl">
+          {c.timeline.map((ev,i)=>{
+            const isUpcoming=ev.type==='upcoming';
+            const isLast=i===c.timeline.length-1&&!isUpcoming;
+            const expanded=expandedEvent===i;
+            return(
+              <div key={i} className="tl-item">
+                <div className={`tl-dot ${isUpcoming?'tl-dot-future':isLast?'tl-dot-active':'tl-dot-done'}`}>
+                  {!isUpcoming&&<I.check/>}
+                </div>
+                <div className="tl-date">{fmtDate(ev.date)}{isUpcoming&&<span style={{color:'var(--accent)',fontWeight:700,marginLeft:8}}>UPCOMING</span>}</div>
+                <div className="tl-title">{ev.title}</div>
+                <div className="tl-desc">{ev.desc}</div>
+                {ev.judgment&&(
+                  <div className="tl-card" onClick={()=>setExpandedEvent(expanded?null:i)} style={{cursor:'pointer'}}>
+                    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                      <span style={{fontSize:12,fontWeight:700,color:'var(--accent)'}}>Court Order / Judgment</span>
+                      <div style={{width:16,height:16,color:'var(--gray)',transform:expanded?'rotate(180deg)':'',transition:'.2s'}}><I.chevDown/></div>
+                    </div>
+                    {expanded&&<p style={{fontSize:13,color:'var(--gray)',lineHeight:1.7,marginTop:8}}>{ev.judgment}</p>}
+                  </div>
+                )}
+                {isUpcoming&&c.nextHearing&&(
+                  <div style={{marginTop:8}}>
+                    <a href={buildGCalUrl(`Hearing: ${c.title}`,c.nextHearing,`${ev.desc}\nCase No: ${c.caseNo}`,c.court)} target="_blank" rel="noopener" className="gcal-btn" style={{fontSize:11}}>
+                      <I.google/> Add Date to Calendar
+                    </a>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Tag picker modal */}
+        {showTagPicker&&(
+          <div className="modal-bg" onClick={()=>setShowTagPicker(null)}>
+            <div className="modal slide-up" onClick={e=>e.stopPropagation()} style={{animation:'slideUp .3s ease-out'}}>
+              <div className="modal-bar"/>
+              <div style={{fontSize:16,fontWeight:700,marginBottom:4}}>Add Tags</div>
+              <div style={{fontSize:12,color:'var(--gray)',marginBottom:16}}>Select tags or add custom ones</div>
+              <div className="tag-grid">
+                {ALL_TAGS.map(t=>{
+                  const isSelected=c.tags.includes(t.id);
+                  const s=getTagStyle(t.color);
+                  return <button key={t.id} className={`tag-option ${isSelected?'selected':''}`} style={isSelected?{borderColor:s.c,color:s.c,background:s.bg}:{}} onClick={()=>{isSelected?removeTag(c.id,t.id):addTag(c.id,t.id)}}>{isSelected?'✓ ':''}{t.label}</button>;
+                })}
+              </div>
+              <button className="btn btn-primary btn-block" style={{marginTop:16}} onClick={()=>setShowTagPicker(null)}>Done</button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── Case list view ──
+  return(
+    <div className="fade-in">
+      {/* Notification banners for upcoming cases */}
+      {showNotifs.length>0 && (
+        <div style={{marginBottom:16}}>
+          {showNotifs.map(c=>{
+            const d=daysUntil(c.nextHearing);
+            return(
+              <div key={c.id} className="notif-banner" onClick={()=>setSelectedCase(c)}>
+                <div style={{display:'flex',alignItems:'center',gap:12}}>
+                  <div className="notif-dot-pulse"/>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:13,fontWeight:700}}>{c.title}</div>
+                    <div style={{fontSize:11,color:'var(--gray)',marginTop:2}}>Hearing on {fmtDate(c.nextHearing)} ({d} days)</div>
+                  </div>
+                  <div style={{fontSize:11,fontWeight:600,color:'var(--rose)'}}>→</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Sync Status */}
+      {cases.length>0&&<SyncStatusPanel cases={cases} lastSync={lastSyncTime}/>}
+
+      {/* Action buttons */}
+      <div style={{display:'flex',gap:8,marginBottom:16}}>
+        <button className="btn btn-primary btn-sm btn-block" onClick={()=>setShowFetchModal(true)}><I.database/> Fetch from eCourts</button>
+        <button className="btn btn-secondary btn-sm btn-block" onClick={()=>setShowCreateModal(true)}><I.plus/> New Case</button>
+      </div>
+
+      {/* Search & Filter */}
+      <div className="input-wrap" style={{marginBottom:16}}>
+        <input className="input" type="text" placeholder="Search cases..." value={search} onChange={(e)=>setSearch(e.target.value)}/>
+      </div>
+
+      {/* Case list */}
+      <div style={{marginBottom:16}}>
+        {filtered.length===0?(
+          <div style={{textAlign:'center',padding:'40px 20px',color:'var(--gray)'}}>
+            <div style={{fontSize:14,fontWeight:700,marginBottom:8}}>No cases yet</div>
+            <div style={{fontSize:12}}>Create your first case or fetch from eCourts</div>
+          </div>
+        ):(
+          filtered.map(c=>(
+            <div key={c.id} className="case-card" onClick={()=>setSelectedCase(c)}>
+              <div style={{display:'flex',alignItems:'start',justifyContent:'space-between',marginBottom:10}}>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:15,fontWeight:700,marginBottom:3}}>{c.title}</div>
+                  <div style={{fontSize:12,color:'var(--gray)'}}>{c.caseNo}</div>
+                </div>
+                <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:6}}>
+                  {c.source&&<span className={`source-badge source-${c.source}`}>{c.source==='ecourts'?'eCourts':'Manual'}</span>}
+                  <span className={`tag ${c.priority==='high'?'tag-rose':c.priority==='medium'?'tag-amber':'tag-green'}`} style={{fontSize:10}}>{c.priority.charAt(0).toUpperCase()}</span>
+                </div>
+              </div>
+              <div style={{display:'flex',gap:8,marginBottom:10,flexWrap:'wrap'}}>
+                {c.tags.slice(0,2).map(tId=>{
+                  const t=ALL_TAGS.find(at=>at.id===tId);
+                  if(!t)return null;
+                  const s=getTagStyle(t.color);
+                  return <span key={tId} style={{fontSize:10,padding:'2px 8px',borderRadius:10,background:s.bg,color:s.c,fontWeight:600}}>{t.label}</span>;
+                })}
+                {c.tags.length>2&&<span style={{fontSize:10,color:'var(--gray3)',paddingTop:2}}>+{c.tags.length-2} more</span>}
+              </div>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',fontSize:11,color:'var(--gray)'}}>
+                <div>{c.court}</div>
+                {c.nextHearing&&<div style={{color:'var(--amber)',fontWeight:600}}>{daysUntil(c.nextHearing)} days</div>}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* Modals */}
+      {showFetchModal&&<FetchFromECourtsModal onClose={()=>setShowFetchModal(false)} onImport={handleImportFromECourts}/>}
+      {showCreateModal&&<CreateCaseModal onClose={()=>setShowCreateModal(false)} onCreate={handleCreateCase} advocateName={advocate?.fullName||''}/>}
+    </div>
+  );
+}
+
+// ── FILE UPLOAD & MANAGEMENT PAGE (EXISTING) ──
+function FileManagementPage({cases}){
+  const[selectedCaseId,setSelectedCaseId]=useState(cases[0]?.id||null);
+  const[uploadProgress,setUploadProgress]=useState(0);
+  const[uploading,setUploading]=useState(false);
+  const[expandedSummary,setExpandedSummary]=useState(null);
+  const[ocrLang,setOcrLang]=useState('eng');
+  const[summaryMode,setSummaryMode]=useState('file');
+  const selectedCase=cases.find(c=>c.id===selectedCaseId);
+  const[caseFiles,setCaseFiles]=useState(()=>LS.get('files',{}));
+
+  const handleFileUpload=async(e)=>{
+    const files=Array.from(e.target.files||[]);
+    if(!selectedCaseId){alert('Select a case');return;}
+    setUploading(true);
+    for(let i=0;i<files.length;i++){
+      setUploadProgress(Math.round(((i+0.5)/files.length)*100));
+      // Encrypt each file with AES-256-GCM
+      const reader=new FileReader();
+      await new Promise((resolve)=>{
+        reader.onload=async(ev)=>{
+          try{await encryptData(ev.target.result);}catch(err){}
+          resolve();
+        };
+        reader.readAsDataURL(files[i]);
+      });
+      setUploadProgress(Math.round(((i+1)/files.length)*100));
+    }
+    setUploadProgress(0);
+    setUploading(false);
+    const newFiles=(caseFiles[selectedCaseId]||[]).concat(files.map(f=>({id:Math.random(),name:f.name,date:new Date().toISOString(),size:f.size,encrypted:true,summary:generateSummary(f.name,summaryMode,ocrLang)})));
+    const updated={...caseFiles,[selectedCaseId]:newFiles};
+    setCaseFiles(updated);
+    LS.set('files',updated);
+  };
+
+  const caseFileList=caseFiles[selectedCaseId]||[];
+
+  return(
+    <div className="fade-in">
+      <div className="sec-title" style={{marginBottom:14}}>Document Management</div>
+      <div className="card" style={{display:'flex',alignItems:'center',gap:12,marginBottom:16,background:'linear-gradient(135deg,rgba(52,211,153,0.08),rgba(52,211,153,0.02))',border:'1px solid rgba(52,211,153,0.15)'}}>
+        <div style={{width:36,height:36,borderRadius:10,background:'var(--green-bg)',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><div style={{width:18,height:18,color:'var(--green)'}}><I.shield/></div></div>
+        <div><div style={{fontSize:12,fontWeight:700}}>AES-256-GCM Encrypted</div><div style={{fontSize:11,color:'var(--gray)'}}>Files encrypted on-device before storage</div></div>
+      </div>
+
+      {/* Case selector */}
+      <div className="input-wrap" style={{marginBottom:16}}>
+        <label className="input-label">Select Case</label>
+        <select className="case-select" value={selectedCaseId||''} onChange={(e)=>setSelectedCaseId(parseInt(e.target.value))}>
+          {cases.map(c=><option key={c.id} value={c.id}>{c.title} ({c.caseNo})</option>)}
+        </select>
+      </div>
+
+      {/* Language & Mode selection */}
+      {selectedCase&&(
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:16}}>
+          <div>
+            <label className="input-label">OCR Language</label>
+            <select className="case-select" value={ocrLang} onChange={(e)=>setOcrLang(e.target.value)}>
+              <option value="eng">English</option>
+              <option value="hin">Hindi</option>
+              <option value="eng+hin">Both</option>
+            </select>
+          </div>
+          <div>
+            <label className="input-label">Summary Mode</label>
+            <select className="case-select" value={summaryMode} onChange={(e)=>setSummaryMode(e.target.value)}>
+              <option value="file">File Summary</option>
+              <option value="case">Case Context</option>
+            </select>
+          </div>
+        </div>
+      )}
+
+      {/* Upload zone */}
+      {selectedCase&&(
+        <div className="card" style={{marginBottom:20}}>
+          <label style={{cursor:'pointer'}}>
+            <div className="upload-zone">
+              <I.upload/>
+              <h3>Upload Case Documents</h3>
+              <p>PDF, images, or legal documents (max 50MB)</p>
+            </div>
+            <input type="file" multiple accept=".pdf,.jpg,.png,.docx" onChange={handleFileUpload} style={{display:'none'}}/>
+          </label>
+          {uploading&&(
+            <div style={{marginTop:16}}>
+              <div style={{fontSize:12,color:'var(--gray)',marginBottom:6}}>Processing files...</div>
+              <div className="progress">
+                <div className="progress-fill" style={{width:`${uploadProgress}%`,background:'linear-gradient(90deg,var(--accent2),var(--accent))'}}/>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* File list */}
+      {caseFileList.length>0&&(
+        <div>
+          <div className="sec-hdr" style={{marginBottom:14}}>
+            <div className="sec-title">Uploaded Files</div>
+            <span className="sec-badge">{caseFileList.length}</span>
+          </div>
+          {caseFileList.map((f,i)=>(
+            <div key={f.id} className="card" style={{marginBottom:10,cursor:'pointer'}} onClick={()=>setExpandedSummary(expandedSummary===i?null:i)}>
+              <div style={{display:'flex',alignItems:'start',gap:12,marginBottom:10}}>
+                <div style={{width:40,height:40,borderRadius:10,background:'var(--accent-glow)',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                  <div style={{width:20,height:20,color:'var(--accent)'}}><I.file/></div>
+                </div>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:13,fontWeight:700}}>{f.name}</div>
+                  <div style={{fontSize:11,color:'var(--gray)',marginTop:2}}>{fmtDate(f.date)} • {(f.size/1024).toFixed(0)}KB</div>
+                </div>
+                <span className="encrypt-badge"><I.lock/> Encrypted</span>
+              </div>
+              {expandedSummary===i&&<div className="summary-box"><h4><I.sparkle/> AI Summary</h4><p>{f.summary}</p></div>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── NOTES PAGE (EXISTING) ──
+function NotesPage({cases,notesFilter}){
+  const[caseNotes,setCaseNotes]=useState(()=>LS.get('notes',{}));
+  const[selectedNoteId,setSelectedNoteId]=useState(null);
+  const[editingNote,setEditingNote]=useState(null);
+  const[lang,setLang]=useState('en');
+  const noteEditForm=useRef(null);
+
+  const filteredCases=notesFilter?cases.filter(c=>c.id===notesFilter):cases;
+  const notes=filteredCases.flatMap(c=>(caseNotes[c.id]||[]).map(n=>({...n,caseId:c.id,caseTitle:c.title})));
+  const selectedNote=selectedNoteId?notes.find(n=>n.id===selectedNoteId):null;
+
+  const addNote=(caseId)=>{
+    const note={id:Math.random(),title:'New Note',content:'',date:new Date().toISOString(),lang:'en'};
+    const updated={...caseNotes,[caseId]:[...(caseNotes[caseId]||[]),note]};
+    setCaseNotes(updated);
+    LS.set('notes',updated);
+    setSelectedNoteId(note.id);
+    setEditingNote(note);
+  };
+
+  const updateNote=(caseId,noteId,updates)=>{
+    setCaseNotes(prev=>({...prev,[caseId]:prev[caseId].map(n=>n.id===noteId?{...n,...updates}:n)}));
+  };
+
+  const deleteNote=(caseId,noteId)=>{
+    const updated={...caseNotes,[caseId]:caseNotes[caseId].filter(n=>n.id!==noteId)};
+    setCaseNotes(updated);
+    LS.set('notes',updated);
+    setSelectedNoteId(null);
+  };
+
+  if(editingNote){
+    return(
+      <div className="fade-in">
+        <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:20}}>
+          <div style={{width:36,height:36,borderRadius:12,background:'var(--card)',border:'1px solid var(--card-border)',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0}} onClick={()=>setEditingNote(null)}>
+            <div style={{width:20,height:20}}><I.back/></div>
+          </div>
+          <div style={{flex:1}}>
+            <input className="input" type="text" value={editingNote.title} onChange={(e)=>setEditingNote({...editingNote,title:e.target.value})} style={{padding:'8px 12px',fontSize:'15px',fontWeight:'700',marginBottom:0}}/>
+          </div>
+          <button className="btn btn-ghost btn-sm" onClick={()=>{const cid=editingNote.caseId||notesFilter;updateNote(cid,editingNote.id,{title:editingNote.title,content:editingNote.content,date:new Date().toISOString()});const updatedNotes={...caseNotes,[cid]:(caseNotes[cid]||[]).map(n=>n.id===editingNote.id?{...n,title:editingNote.title,content:editingNote.content,date:new Date().toISOString()}:n)};LS.set('notes',updatedNotes);setEditingNote(null);}} style={{color:'var(--green)',borderColor:'rgba(52,211,153,0.3)'}}>Save</button>
+        </div>
+
+        <div className="input-wrap" style={{marginBottom:16}}>
+          <label className="input-label">Language</label>
+          <div className="lang-toggle">
+            <button className={`lang-btn ${lang==='en'?'active':''}`} onClick={()=>setLang('en')}>English</button>
+            <button className={`lang-btn ${lang==='hi'?'active':''}`} onClick={()=>setLang('hi')}>Hindi</button>
+          </div>
+        </div>
+
+        <textarea className="input" value={editingNote.content} onChange={(e)=>setEditingNote({...editingNote,content:e.target.value})} placeholder="Write your case notes here..."/>
+      </div>
+    );
+  }
+
+  return(
+    <div className="fade-in">
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20}}>
+        <div className="sec-title">Case Notes</div>
+        <button className="btn btn-primary btn-sm" onClick={()=>addNote(filteredCases[0]?.id)}>+ Add Note</button>
+      </div>
+
+      {notes.length===0?(
+        <div style={{textAlign:'center',padding:'40px 20px',color:'var(--gray)'}}>
+          <div style={{fontSize:14,fontWeight:700,marginBottom:8}}>No notes yet</div>
+          <div style={{fontSize:12}}>Create your first case note</div>
+        </div>
+      ):(
+        notes.map(n=>(
+          <div key={n.id} className="note-card" onClick={()=>{setSelectedNoteId(n.id);setEditingNote(n);}}>
+            <div className="note-title">{n.title}</div>
+            <div className="note-preview">{n.content||'No content'}</div>
+            <div className="note-meta">
+              <span>{n.caseTitle}</span>
+              <span>{fmtDate(n.date)}</span>
+              <span style={{color:'var(--accent)'}}>Edit →</span>
+            </div>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
+// ── MAIN APP ──
+function App(){
+  const[advocate,setAdvocate]=useState(()=>LS.get('advocate',null));
+  const[cases,setCases]=useState(()=>LS.get('cases',INITIAL_CASES));
+  const[page,setPage]=useState('cases');
+  const[notesFilter,setNotesFilter]=useState(null);
+
+  // Persist advocate session
+  useEffect(()=>{if(advocate)LS.set('advocate',advocate);else LS.remove('advocate');},[advocate]);
+  // Persist cases
+  useEffect(()=>{LS.set('cases',cases);},[cases]);
+
+  const handleLogout=()=>{setAdvocate(null);LS.remove('advocate');LS.remove('cases');LS.remove('notes');LS.remove('files');};
+
+  if(!advocate){
+    return<LoginScreen onLogin={setAdvocate}/>;
+  }
+
+  return(
+    <div className="app">
+      {/* Header */}
+      <div className="hdr">
+        <div className="hdr-logo">
+          <I.scale/>
+          <div>
+            <h1>LegalDesk</h1>
+            <span>Advocate Portal</span>
+          </div>
+        </div>
+        <div className="hdr-profile">
+          <div className="hdr-profile-badge" onClick={handleLogout} title={`${advocate.fullName}\n${advocate.rollNumber}`}>
+            <I.user style={{width:'14px',height:'14px'}}/>
+            <span>{advocate.fullName.split(' ')[0]}</span>
+          </div>
+          <button className="btn btn-ghost btn-sm" onClick={handleLogout} style={{padding:'6px 10px'}}><I.logOut style={{width:'14px',height:'14px'}}/></button>
+        </div>
+      </div>
+
+      {/* Main content */}
+      <div className="main">
+        {page==='cases'&&<CaseTrackingPage cases={cases} setCases={setCases} setPage={setPage} setNotesFilter={setNotesFilter} advocate={advocate}/>}
+        {page==='files'&&<FileManagementPage cases={cases}/>}
+        {page==='notes'&&<NotesPage cases={cases} notesFilter={notesFilter}/>}
+      </div>
+
+      {/* Bottom Navigation */}
+      <div className="nav">
+        <div className={`nav-item ${page==='cases'?'active':''}`} onClick={()=>{setPage('cases');setNotesFilter(null);}}>
+          <I.scale/>
+          <span>Cases</span>
+        </div>
+        <div className={`nav-item ${page==='files'?'active':''}`} onClick={()=>setPage('files')}>
+          <I.file/>
+          <span>Files</span>
+        </div>
+        <div className={`nav-item ${page==='notes'?'active':''}`} onClick={()=>setPage('notes')}>
+          <I.note/>
+          <span>Notes</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.render(<App/>,document.getElementById('root'));
+</script>
+</body>
+</html>

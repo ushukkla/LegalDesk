@@ -775,8 +775,113 @@ app.get("/api/case-types", (req, res) => {
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────
+// TRANSLATION (Google Translate — free, no key needed)
+// ─────────────────────────────────────────────────────────────────────
+
+let translateFn = null;
+
+async function loadTranslator() {
+  try {
+    const mod = await import("google-translate-api-x");
+    translateFn = mod.default || mod.translate;
+    console.log("[Translator] Google Translate loaded successfully");
+  } catch (err) {
+    console.error("[Translator] Failed to load google-translate-api-x:", err.message);
+  }
+}
+
+// POST /api/translate — translate text between languages
+app.post("/api/translate", async (req, res) => {
+  try {
+    const { text, from, to } = req.body;
+    if (!text || !to) {
+      return res.status(400).json({ status: "error", error: "Missing 'text' and 'to' parameters" });
+    }
+    if (!translateFn) {
+      await loadTranslator();
+      if (!translateFn) {
+        return res.status(503).json({ status: "error", error: "Translation service unavailable" });
+      }
+    }
+
+    const fromLang = from || "auto";
+    const MAX_CHUNK = 4500; // Google Translate limit per request
+
+    // Split long text into chunks at sentence boundaries
+    let chunks = [];
+    if (text.length <= MAX_CHUNK) {
+      chunks = [text];
+    } else {
+      let i = 0;
+      while (i < text.length) {
+        let end = Math.min(i + MAX_CHUNK, text.length);
+        if (end < text.length) {
+          const lastPeriod = text.lastIndexOf(".", end);
+          const lastNewline = text.lastIndexOf("\n", end);
+          const splitAt = Math.max(lastPeriod, lastNewline);
+          if (splitAt > i) end = splitAt + 1;
+        }
+        chunks.push(text.slice(i, end));
+        i = end;
+      }
+    }
+
+    // Translate each chunk
+    const results = [];
+    for (const chunk of chunks) {
+      const result = await translateFn(chunk, { from: fromLang, to });
+      results.push(result.text);
+    }
+
+    const translated = results.join("");
+    res.json({
+      status: "success",
+      translatedText: translated,
+      from: fromLang,
+      to,
+      chars: text.length,
+    });
+  } catch (err) {
+    console.error("[Translate] Error:", err.message);
+    res.status(500).json({ status: "error", error: "Translation failed: " + err.message });
+  }
+});
+
+// GET /api/translate/languages — list supported languages
+app.get("/api/translate/languages", (req, res) => {
+  // Common languages relevant for Indian legal context
+  res.json({
+    status: "success",
+    languages: [
+      { code: "hi", name: "Hindi" },
+      { code: "en", name: "English" },
+      { code: "ur", name: "Urdu" },
+      { code: "bn", name: "Bengali" },
+      { code: "ta", name: "Tamil" },
+      { code: "te", name: "Telugu" },
+      { code: "mr", name: "Marathi" },
+      { code: "gu", name: "Gujarati" },
+      { code: "kn", name: "Kannada" },
+      { code: "ml", name: "Malayalam" },
+      { code: "pa", name: "Punjabi" },
+      { code: "or", name: "Odia" },
+      { code: "as", name: "Assamese" },
+      { code: "sa", name: "Sanskrit" },
+      { code: "ar", name: "Arabic" },
+      { code: "fr", name: "French" },
+      { code: "de", name: "German" },
+      { code: "es", name: "Spanish" },
+      { code: "zh-CN", name: "Chinese (Simplified)" },
+      { code: "ja", name: "Japanese" },
+    ],
+  });
+});
+
+
 // ── Start server ──
 app.listen(PORT, () => {
+  loadTranslator();
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
 ║  LegalDesk API Server v1.0.0                                 ║
@@ -792,6 +897,8 @@ app.listen(PORT, () => {
 ║    GET  /api/court-view            — Live court display       ║
 ║    GET  /api/court-calendar        — Holidays & vacations     ║
 ║    GET  /api/case-types            — Available case types     ║
+║    POST /api/translate             — Translate text (free)    ║
+║    GET  /api/translate/languages   — Supported languages      ║
 ║    GET  /health                    — Health check             ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
