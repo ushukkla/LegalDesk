@@ -2146,10 +2146,8 @@ const AzureTranslator = {
 // COURT API SERVICE — connects frontend to the LegalDesk backend API
 // ─────────────────────────────────────────────────────────────────────
 const CourtAPI = {
-  // Base URL — uses Render cloud deployment by default
-  baseUrl: LS.get('courtApiUrl', 'https://legaldesk-api.onrender.com'),
-
-  setBaseUrl(url) { this.baseUrl = url; LS.set('courtApiUrl', url); },
+  // Base URL — hardcoded, not user-configurable
+  baseUrl: 'https://legaldesk-api.onrender.com',
 
   async _fetch(path, options = {}) {
     try {
@@ -6699,25 +6697,6 @@ function SettingsPage() {
                 </button>
               </div>
             )}
-          </div>
-
-          {/* Backend API Configuration */}
-          <div className="card" style={{marginTop:20}}>
-            <h3 style={{fontSize:15, fontWeight:700, marginBottom:12}}>{Icons.monitor} Court Data Backend</h3>
-            <p style={{fontSize:13, color:'var(--text-secondary)', marginBottom:12}}>
-              Connect to the LegalDesk API server for real-time case data, live ETAs, and Bar Council validation.
-            </p>
-            <div className="form-group">
-              <label className="form-label">API Server URL</label>
-              <input className="form-input" placeholder="http://localhost:3001" defaultValue={CourtAPI.baseUrl} onChange={e => {
-                if (e.target.value.trim()) CourtAPI.setBaseUrl(e.target.value.trim());
-              }} />
-            </div>
-            <button className="btn btn-primary btn-sm" onClick={async () => {
-              const h = await CourtAPI.healthCheck();
-              if (h.status === 'ok') addToast('Backend connected! Real court data is now active.', 'success');
-              else addToast('Cannot reach backend at ' + CourtAPI.baseUrl + '. Check if the server is running.', 'error');
-            }}>Test Connection</button>
           </div>
 
           <button className="btn btn-danger btn-block" style={{marginTop:24}} onClick={handleLogout}>
