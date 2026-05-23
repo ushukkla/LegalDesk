@@ -1,0 +1,19 @@
+{
+  "name": "legaldesk-api",
+  "version": "1.0.0",
+  "description": "LegalDesk Backend API — provides real-time Allahabad HC court data for the frontend",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0",
+    "cors": "^2.8.5",
+    "express": "^4.21.0",
+    "node-fetch": "^3.3.2",
+    "sharp": "^0.33.2",
+    "tesseract.js": "^5.1.1"
+  }
+}

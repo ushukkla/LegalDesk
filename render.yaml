@@ -1,0 +1,27 @@
+# ═══════════════════════════════════════════════════════════════════════
+#  Render.com — Blueprint (one-click deploy)
+#  https://render.com/docs/blueprint-spec
+# ═══════════════════════════════════════════════════════════════════════
+#
+#  Deploy steps:
+#    1. Push this repo to GitHub
+#    2. Go to https://dashboard.render.com → New → Blueprint
+#    3. Connect your GitHub repo
+#    4. Render auto-detects this file and deploys
+#
+#  Free tier: 750 hours/month, spins down after 15 min inactivity
+#  Starter tier ($7/mo): Always on, no cold starts
+
+services:
+  - type: web
+    name: legaldesk-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .                       # Build context = repo root (needed for sibling folder)
+    plan: free                             # Change to "starter" for always-on
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "3001"

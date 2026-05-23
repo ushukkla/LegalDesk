@@ -2143,6 +2143,104 @@ const AzureTranslator = {
 };
 
 // ─────────────────────────────────────────────────────────────────────
+// COURT API SERVICE — connects frontend to the LegalDesk backend API
+// ─────────────────────────────────────────────────────────────────────
+const CourtAPI = {
+  // Base URL — change this when deploying to production
+  baseUrl: LS.get('courtApiUrl', 'http://localhost:3001'),
+
+  setBaseUrl(url) { this.baseUrl = url; LS.set('courtApiUrl', url); },
+
+  async _fetch(path, options = {}) {
+    try {
+      const resp = await fetch(`${this.baseUrl}${path}`, {
+        ...options,
+        headers: { 'Content-Type': 'application/json', ...options.headers },
+        signal: AbortSignal.timeout(30000),
+      });
+      if (!resp.ok) throw new Error(`API error ${resp.status}`);
+      return await resp.json();
+    } catch (err) {
+      console.warn('[CourtAPI]', path, err.message);
+      return { status: 'error', error: err.message };
+    }
+  },
+
+  /** Check if backend is reachable */
+  async healthCheck() {
+    return this._fetch('/health');
+  },
+
+  /** Validate Bar Council enrollment number + try to find cases */
+  async validateAdvocate(enrollmentNo, name) {
+    return this._fetch('/api/validate-advocate', {
+      method: 'POST',
+      body: JSON.stringify({ enrollmentNo, name }),
+    });
+  },
+
+  /** Fetch all cases for an advocate from both benches */
+  async getAdvocateCases(rollNumber) {
+    return this._fetch(`/api/advocate-cases-all/${encodeURIComponent(rollNumber)}`);
+  },
+
+  /** Fetch case status */
+  async getCaseStatus(caseType, caseNumber, caseYear, bench) {
+    const params = new URLSearchParams({ type: caseType, number: caseNumber, year: caseYear, bench: bench || 'allahabad' });
+    return this._fetch(`/api/case-status?${params}`);
+  },
+
+  /** Fetch listing history & IA details */
+  async getCaseHistory(caseType, caseNumber, caseYear, bench) {
+    const params = new URLSearchParams({ type: caseType, number: caseNumber, year: caseYear, bench: bench || 'allahabad' });
+    return this._fetch(`/api/case-history?${params}`);
+  },
+
+  /** Fetch live court view (for real-time ETA) */
+  async getCourtView(bench) {
+    return this._fetch(`/api/court-view?bench=${bench || 'allahabad'}`);
+  },
+
+  /** Fetch today's cause list */
+  async getCauselistToday(bench) {
+    return this._fetch(`/api/causelist-today?bench=${bench || 'allahabad'}`);
+  },
+
+  /** Get court calendar */
+  async getCourtCalendar() {
+    return this._fetch('/api/court-calendar');
+  },
+
+  /** Convert raw API case data to the app's Matter format */
+  apiCaseToMatter(apiCase, index) {
+    const id = 'live_' + (apiCase.caseType || 'X') + '_' + (apiCase.caseNo || index) + '_' + (apiCase.year || '');
+    const caseRef = apiCase.caseRef || `${apiCase.caseType}/${apiCase.caseNo}/${apiCase.year}`;
+    return {
+      id,
+      caseRef,
+      caseType: apiCase.caseType || '',
+      caseNo: apiCase.caseNo || '',
+      year: apiCase.year || '',
+      court: apiCase.court || 'Allahabad High Court',
+      title: apiCase.title || apiCase.parties || 'Unknown',
+      status: (apiCase.status || 'PENDING').toUpperCase(),
+      stage: apiCase.stage || 'Listed',
+      nextHearing: apiCase.nextHearing || null,
+      coram: apiCase.coram || '',
+      bench: apiCase.bench || 'Allahabad',
+      tags: [],
+      onPriority: false,
+      createdAt: new Date().toISOString().split('T')[0],
+      updatedAt: new Date().toISOString().split('T')[0],
+      listingHistory: [],
+      iaDetails: [],
+      defects: [],
+      _liveData: true, // Flag indicating this came from real court data
+    };
+  },
+};
+
+// ─────────────────────────────────────────────────────────────────────
 // ERROR BOUNDARY
 // ─────────────────────────────────────────────────────────────────────
 class ErrorBoundary extends React.Component {
@@ -2982,6 +3080,24 @@ function LoginPage({ onLogin }) {
     setVerifying(true);
     setAuthError('');
     try {
+      // Step 1: Validate Bar Council enrollment with the backend API
+      let validationResult = null;
+      try {
+        validationResult = await CourtAPI.validateAdvocate(form.barCouncil, form.name);
+      } catch (apiErr) {
+        console.warn('[LegalDesk] Backend validation unavailable, falling back to format check:', apiErr);
+      }
+
+      // If backend returned invalid format, block signup
+      if (validationResult && validationResult.status === 'invalid') {
+        setAuthError(validationResult.error || 'Invalid Bar Council enrollment number format.');
+        setVerifying(false);
+        return;
+      }
+
+      const isBackendValidated = validationResult?.status === 'validated';
+      const confidence = validationResult?.confidence || 'format_only';
+
       const profileData = {
         name: form.name,
         barCouncil: form.barCouncil,
@@ -2990,6 +3106,8 @@ function LoginPage({ onLogin }) {
         email: googleUser?.email,
         verified: true,
         verifiedAt: new Date().toISOString(),
+        barCouncilValidation: isBackendValidated ? confidence : 'offline',
+        casesFoundOnHC: validationResult?.totalCases || 0,
       };
       const loginData = {
         ...profileData,
@@ -3007,7 +3125,6 @@ function LoginPage({ onLogin }) {
         });
       }
     } catch (err) {
-      // If even onLogin fails somehow, show error
       setAuthError('Failed to complete verification. Please try again.');
       setVerifying(false);
     }
@@ -3386,7 +3503,7 @@ function Header({ onToggleSidebar, onLogout }) {
 // DASHBOARD PAGE
 // ─────────────────────────────────────────────────────────────────────
 function DashboardPage() {
-  const { matters, navigate, setSelectedMatter, user, addToast, teamMembers } = useContext(AppContext);
+  const { matters, navigate, setSelectedMatter, user, addToast, teamMembers, backendOnline, loadingLiveCases } = useContext(AppContext);
   const [tab, setTab] = useState('confirmed');
   const [expanded, setExpanded] = useState({});
   const [livePanel, setLivePanel] = useState('courtview'); // courtview | justiceclock | benchroster | causelists | efiling | defective
@@ -3514,6 +3631,16 @@ function DashboardPage() {
           }}>
             <span style={{width:7, height:7, borderRadius:'50%', background: isCourtWorking ? 'var(--success)' : 'var(--danger)', display:'inline-block', animation: isCourtWorking ? 'pulse 2s infinite' : 'none'}} />
             {isCourtWorking ? 'COURT IN SESSION' : currentVacation ? 'VACATION' : isHoliday ? 'HOLIDAY' : 'WEEKEND'}
+          </div>
+          <div style={{
+            display:'inline-flex', alignItems:'center', gap:6, padding:'4px 12px',
+            borderRadius:'var(--radius-full)', fontSize:11, fontWeight:600,
+            background: backendOnline ? '#ECFDF5' : '#FEF3C7',
+            color: backendOnline ? '#059669' : '#D97706',
+            border: `1px solid ${backendOnline ? '#05966920' : '#D9770620'}`,
+          }}>
+            <span style={{width:6, height:6, borderRadius:'50%', background: backendOnline ? '#059669' : '#D97706', display:'inline-block'}} />
+            {loadingLiveCases ? 'Fetching live cases...' : backendOnline ? 'LIVE DATA' : 'DEMO DATA'}
           </div>
           <div style={{fontSize:13, color:'var(--text-secondary)'}}>
             {Icons.calendar} <span style={{marginLeft:4}}>{fmtDateLong(today)}</span>
@@ -4021,15 +4148,42 @@ function MattersPage() {
 // LIVE ETA BANNER
 // ─────────────────────────────────────────────────────────────────────
 function LiveETABanner({ singleMatter }) {
-  const { matters } = useContext(AppContext);
+  const { matters, backendOnline } = useContext(AppContext);
   const [etaTab, setEtaTab] = useState('all');
   const [simTick, setSimTick] = useState(0);
+  const [liveCourtData, setLiveCourtData] = useState(null);
 
-  // Advance simulated counter every 30s
+  // Fetch real court view data every 30s if backend is online
   useEffect(() => {
-    const iv = setInterval(() => setSimTick(t => t + 1), 30000);
-    return () => clearInterval(iv);
-  }, []);
+    let cancelled = false;
+    const fetchCourtView = async () => {
+      if (!backendOnline) {
+        setSimTick(t => t + 1); // fallback to simulated
+        return;
+      }
+      try {
+        const [ald, lko] = await Promise.allSettled([
+          CourtAPI.getCourtView('allahabad'),
+          CourtAPI.getCourtView('lucknow'),
+        ]);
+        if (cancelled) return;
+        const courts = [
+          ...(ald.status === 'fulfilled' && ald.value.courts ? ald.value.courts : []),
+          ...(lko.status === 'fulfilled' && lko.value.courts ? lko.value.courts : []),
+        ];
+        if (courts.length > 0) {
+          setLiveCourtData(courts);
+        } else {
+          setSimTick(t => t + 1);
+        }
+      } catch {
+        setSimTick(t => t + 1);
+      }
+    };
+    fetchCourtView();
+    const iv = setInterval(fetchCourtView, 30000);
+    return () => { cancelled = true; clearInterval(iv); };
+  }, [backendOnline]);
 
   const today = toYMD(new Date());
   const todayMatters = singleMatter
@@ -4047,10 +4201,19 @@ function LiveETABanner({ singleMatter }) {
     { key: 'timefixed', label: 'Time Fixed' },
   ];
 
+  const isLive = !!(liveCourtData && liveCourtData.length > 0);
   const avgTimePerItem = 5; // minutes
   const mattersWithEta = todayMatters.map((m, idx) => {
-    const userItemNo = m.itemNo || (idx + 1) * 3 + 5; // simulated item number
-    const currentItem = Math.min(userItemNo, 1 + simTick + Math.floor(idx * 2)); // simulated progress
+    const userItemNo = m.itemNo || (idx + 1) * 3 + 5;
+    // Use real court view data if available
+    let currentItem;
+    if (isLive) {
+      // Try to match court from live data
+      const courtMatch = liveCourtData.find(c => c.coram && m.coram && c.coram.includes(m.coram.split(',')[0]?.trim()));
+      currentItem = courtMatch ? parseInt(courtMatch.currentItem) || 1 : 1 + Math.floor(idx * 2);
+    } else {
+      currentItem = Math.min(userItemNo, 1 + simTick + Math.floor(idx * 2)); // simulated progress
+    }
     const itemsAway = Math.max(0, userItemNo - currentItem);
     const etaMins = itemsAway * avgTimePerItem;
     const courtRoom = m.coram ? 'Court ' + (idx + 1) : 'Court ' + (idx + 1);
@@ -4087,7 +4250,10 @@ function LiveETABanner({ singleMatter }) {
       </div>
       <div style={{fontSize:11, color:'var(--text-muted)', marginBottom:8}}>
         Live Cause List: <a href="https://hclko.allahabadhighcourt.in/causelist/input2L.jsp" target="_blank" rel="noopener" style={{color:'var(--primary)'}}>Lucknow</a> | <a href="https://www.allahabadhighcourt.in/causelist/causelist_ald.htm" target="_blank" rel="noopener" style={{color:'var(--primary)'}}>Allahabad</a>
-        <span style={{marginLeft:8, fontStyle:'italic'}}>(Simulated progress - refreshes every 30s)</span>
+        {isLive
+          ? <span style={{marginLeft:8, fontStyle:'italic', color:'var(--success)'}}>● Live from Court Display Board (updates every 30s)</span>
+          : <span style={{marginLeft:8, fontStyle:'italic'}}>(Estimated progress - connect backend for live updates)</span>
+        }
       </div>
       {filteredMatters.length === 0 ? (
         <div style={{padding:12, textAlign:'center', color:'var(--text-muted)', fontSize:12}}>No hearings in this category today</div>
@@ -4553,7 +4719,7 @@ function fmtSize(bytes) {
 // MATTER DETAIL PAGE
 // ─────────────────────────────────────────────────────────────────────
 function MatterDetailPage() {
-  const { selectedMatter, setSelectedMatter, matters, setMatters, navigate, addToast, teamMembers } = useContext(AppContext);
+  const { selectedMatter, setSelectedMatter, matters, setMatters, navigate, addToast, teamMembers, backendOnline } = useContext(AppContext);
   const m = selectedMatter;
   const [userDate, setUserDate] = useState(m?.userNextDate || '');
   const [notes, setNotes] = useState(LS.get('notes_' + m?.id, ''));
@@ -4563,6 +4729,68 @@ function MatterDetailPage() {
   const [showTranslate, setShowTranslate] = useState(null);
   const [translateLang, setTranslateLang] = useState('hi');
   const [notesTab, setNotesTab] = useState('notes');
+  const [fetchingHistory, setFetchingHistory] = useState(false);
+
+  // Auto-fetch real case history from backend for live matters
+  useEffect(() => {
+    if (!m || !m._liveData || !backendOnline || !m.caseType || !m.caseNo || !m.year) return;
+    if (m.listingHistory && m.listingHistory.length > 0) return; // Already has history
+    let cancelled = false;
+    setFetchingHistory(true);
+    const fetchHistory = async () => {
+      try {
+        const bench = m.court?.includes('Lucknow') ? 'lucknow' : 'allahabad';
+        const [statusRes, histRes] = await Promise.allSettled([
+          CourtAPI.getCaseStatus(m.caseType, m.caseNo, m.year, bench),
+          CourtAPI.getCaseHistory(m.caseType, m.caseNo, m.year, bench),
+        ]);
+        if (cancelled) return;
+        const updates = {};
+        if (statusRes.status === 'fulfilled' && statusRes.value.status === 'success') {
+          const s = statusRes.value;
+          if (s.petitioner) updates.title = `${s.petitioner} v. ${s.respondent || 'State'}`;
+          if (s.stage) updates.stage = s.stage;
+          if (s.coram) updates.coram = s.coram;
+          if (s.nextHearing) updates.nextHearing = s.nextHearing;
+          if (s.lastHearing) updates.lastHearing = s.lastHearing;
+          if (s.filingDate) updates.firstHearing = s.filingDate;
+          if (s.district) updates.district = s.district;
+          if (s.firDetails) updates.firDetails = s.firDetails;
+        }
+        if (histRes.status === 'fulfilled' && histRes.value.status === 'success') {
+          const h = histRes.value;
+          if (h.listingHistory?.length > 0) {
+            updates.listingHistory = h.listingHistory.map(lh => ({
+              causeType: lh.purpose || 'Hearing',
+              bench: lh.court || '',
+              date: lh.date || '',
+              order: lh.order || '',
+            }));
+          }
+          if (h.interlocutoryApplications?.length > 0) {
+            updates.iaDetails = h.interlocutoryApplications.map(ia => ({
+              appId: ia.iaNumber || '',
+              party: ia.type || '',
+              filingDate: ia.filedOn || '',
+              status: ia.status || 'Pending',
+            }));
+          }
+        }
+        if (Object.keys(updates).length > 0) {
+          const updated = { ...m, ...updates, updatedAt: toYMD(new Date()) };
+          setSelectedMatter(updated);
+          setMatters(prev => prev.map(x => x.id === m.id ? updated : x));
+          addToast('Case details updated from court portal', 'success');
+        }
+      } catch (err) {
+        console.warn('[MatterDetail] History fetch failed:', err);
+      } finally {
+        if (!cancelled) setFetchingHistory(false);
+      }
+    };
+    fetchHistory();
+    return () => { cancelled = true; };
+  }, [m?.id, backendOnline]);
 
   if (!m) return <div className="content"><div className="empty-state"><h3>No matter selected</h3><button className="btn btn-primary mt-16" onClick={()=>navigate('matters')}>Go to Matters</button></div></div>;
 
@@ -6473,6 +6701,25 @@ function SettingsPage() {
             )}
           </div>
 
+          {/* Backend API Configuration */}
+          <div className="card" style={{marginTop:20}}>
+            <h3 style={{fontSize:15, fontWeight:700, marginBottom:12}}>{Icons.monitor} Court Data Backend</h3>
+            <p style={{fontSize:13, color:'var(--text-secondary)', marginBottom:12}}>
+              Connect to the LegalDesk API server for real-time case data, live ETAs, and Bar Council validation.
+            </p>
+            <div className="form-group">
+              <label className="form-label">API Server URL</label>
+              <input className="form-input" placeholder="http://localhost:3001" defaultValue={CourtAPI.baseUrl} onChange={e => {
+                if (e.target.value.trim()) CourtAPI.setBaseUrl(e.target.value.trim());
+              }} />
+            </div>
+            <button className="btn btn-primary btn-sm" onClick={async () => {
+              const h = await CourtAPI.healthCheck();
+              if (h.status === 'ok') addToast('Backend connected! Real court data is now active.', 'success');
+              else addToast('Cannot reach backend at ' + CourtAPI.baseUrl + '. Check if the server is running.', 'error');
+            }}>Test Connection</button>
+          </div>
+
           <button className="btn btn-danger btn-block" style={{marginTop:24}} onClick={handleLogout}>
             {Icons.logOut} Logout
           </button>
@@ -7309,6 +7556,60 @@ function App() {
     return () => unsub();
   }, []);
 
+  // ── Fetch real cases from backend when user has a Bar Council number ──
+  const [backendOnline, setBackendOnline] = useState(false);
+  const [loadingLiveCases, setLoadingLiveCases] = useState(false);
+
+  useEffect(() => {
+    if (!user?.barCouncil) return;
+    let cancelled = false;
+
+    const fetchLiveCases = async () => {
+      // Check if backend is reachable
+      const health = await CourtAPI.healthCheck();
+      if (health.status !== 'ok') {
+        console.warn('[App] Backend API not reachable, using cached/demo data');
+        setBackendOnline(false);
+        return;
+      }
+      setBackendOnline(true);
+      setLoadingLiveCases(true);
+
+      try {
+        const result = await CourtAPI.getAdvocateCases(user.barCouncil);
+        if (cancelled) return;
+
+        if (result.status === 'success' && result.cases.length > 0) {
+          // Convert API cases to app matter format
+          const liveCases = result.cases.map((c, i) => CourtAPI.apiCaseToMatter(c, i));
+
+          // Merge with any local-only cases (manually added ones)
+          const existingMatters = LS.get('matters', []);
+          const localOnlyMatters = existingMatters.filter(m => !m._liveData);
+          const merged = [...liveCases, ...localOnlyMatters];
+
+          setMattersState(merged);
+          LS.set('matters', merged);
+          LS.set('matters_lastSync', Date.now());
+          addToast(`Loaded ${liveCases.length} live case(s) from Allahabad HC`, 'success');
+        } else if (result.status === 'no_cases_found') {
+          addToast('No cases found for your enrollment. You can add cases manually.', 'info');
+        } else if (result.status === 'captcha_failed') {
+          addToast('Court portal CAPTCHA failed. Using cached data. Will retry automatically.', 'info');
+        }
+      } catch (err) {
+        console.error('[App] Live case fetch error:', err);
+      } finally {
+        if (!cancelled) setLoadingLiveCases(false);
+      }
+    };
+
+    fetchLiveCases();
+    // Refresh every 10 minutes
+    const interval = setInterval(fetchLiveCases, 10 * 60 * 1000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [user?.barCouncil]);
+
   const handleLogin = (userData) => { setUser(userData); LS.set('user', userData); };
   const handleLogout = async () => {
     // Flush pending syncs
@@ -7350,6 +7651,7 @@ function App() {
     calendarTasks, setCalendarTasks,
     teamMembers, setTeamMembers,
     selectedMatter, setSelectedMatter, addToast, isOnline,
+    backendOnline, loadingLiveCases,
   };
 
   const renderPage = () => {
