@@ -4489,19 +4489,60 @@ function DocTranslateModal({ doc, translateLang, setTranslateLang, onClose, docu
   const [translating, setTranslating] = useState(false);
   const [translatedText, setTranslatedText] = useState('');
   const [progress, setProgress] = useState('');
+  const [saved, setSaved] = useState(false);
 
-  const outputName = doc.name.replace(/\.[^.]+$/, translateLang === 'hi' ? '_hindi' : '_english') + '.' + doc.name.split('.').pop();
+  // Determine output format: preserve original format (.docx stays .docx, .txt stays .txt)
+  const srcExt = (doc.name.split('.').pop() || 'txt').toLowerCase();
+  const isDocx = srcExt === 'docx' || srcExt === 'doc';
+  const outExt = isDocx ? 'docx' : srcExt === 'pdf' ? 'docx' : 'txt'; // PDF source → .docx output for proper Hindi
+  const langSuffix = translateLang === 'hi' ? '_hindi' : '_english';
+  const outputName = doc.name.replace(/\.[^.]+$/, '') + langSuffix + '.' + outExt;
+
+  /** Build a Word-compatible .doc(x) blob with proper Hindi/Unicode support */
+  const buildWordBlob = (text) => {
+    const paragraphs = text.split(/\n+/).map(p => p.trim()).filter(Boolean);
+    const htmlParagraphs = paragraphs.map(p =>
+      '<p style="font-size:12pt;line-height:1.8;margin:0 0 6pt 0;text-align:justify;">' + p.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</p>'
+    ).join('\n');
+
+    const wordHtml = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+<head>
+<meta charset="utf-8">
+<meta name="ProgId" content="Word.Document">
+<style>
+  body { font-family: 'Noto Sans Devanagari', 'Mangal', 'Arial Unicode MS', Arial, sans-serif; font-size: 12pt; line-height: 1.8; margin: 1in; }
+  @page { size: A4; margin: 1in; }
+  p { margin: 0 0 6pt 0; }
+</style>
+</head>
+<body lang="${translateLang === 'hi' ? 'HI' : 'EN-US'}">
+<div style="padding:0;">
+  <div style="text-align:center;margin-bottom:16pt;border-bottom:1px solid #ccc;padding-bottom:8pt;">
+    <span style="font-size:9pt;color:#888;">Translated from: ${doc.name}</span>
+  </div>
+  ${htmlParagraphs}
+</div>
+</body>
+</html>`;
+    return new Blob(['﻿' + wordHtml], { type: 'application/msword' });
+  };
+
+  /** Build a UTF-8 text blob with BOM for proper Hindi rendering */
+  const buildTextBlob = (text) => {
+    return new Blob(['﻿' + text], { type: 'text/plain;charset=utf-8' });
+  };
 
   const doTranslate = async () => {
     setTranslating(true);
+    setSaved(false);
     setProgress('Extracting text from document...');
     try {
       // Extract text from the document
       let text = '';
       if (doc.type === 'text/plain' || doc.name.endsWith('.txt')) {
-        // Decode base64 data URL
         const b64 = doc.data.split(',')[1];
-        text = atob(b64);
+        const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+        text = new TextDecoder('utf-8').decode(bytes);
       } else if (doc.name.endsWith('.pdf')) {
         const b64 = doc.data.split(',')[1];
         const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
@@ -4511,6 +4552,7 @@ function DocTranslateModal({ doc, translateLang, setTranslateLang, onClose, docu
         if (parenMatches) parenMatches.forEach(p => { const t = p.slice(1,-1); if (t.trim().length > 5 && /[a-zA-Zऀ-ॿ]/.test(t)) textParts.push(t); });
         text = textParts.join(' ').replace(/\s+/g, ' ').trim();
       } else {
+        // .docx: extract text from Word XML
         const b64 = doc.data.split(',')[1];
         const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
         const decoded = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
@@ -4520,7 +4562,7 @@ function DocTranslateModal({ doc, translateLang, setTranslateLang, onClose, docu
       }
 
       if (!text || text.trim().length < 10) {
-        addToast('Could not extract text from this document. Try a .txt file.', 'error');
+        addToast('Could not extract text from this document. Try a .txt or .docx file.', 'error');
         setTranslating(false);
         return;
       }
@@ -4530,14 +4572,16 @@ function DocTranslateModal({ doc, translateLang, setTranslateLang, onClose, docu
       const result = await AzureTranslator.translate(text.slice(0, 20000), srcLang, translateLang);
       setTranslatedText(result);
 
-      // Save translated document as a new document in the matter
-      const translatedBlob = new Blob([result], { type: 'text/plain' });
+      // Save in the correct format
+      setProgress('Saving as ' + outExt.toUpperCase() + '...');
+      const translatedBlob = (outExt === 'docx' || outExt === 'doc') ? buildWordBlob(result) : buildTextBlob(result);
+
       const reader = new FileReader();
       reader.onload = (ev) => {
         const translatedDoc = {
           id: 'doc' + Date.now() + Math.random().toString(36).slice(2,6),
-          name: doc.name.replace(/\.[^.]+$/, '') + (translateLang === 'hi' ? '_hindi' : '_english') + '.txt',
-          type: 'text/plain',
+          name: outputName,
+          type: translatedBlob.type,
           size: translatedBlob.size,
           data: ev.target.result,
           uploadedAt: toYMD(new Date()),
@@ -4545,7 +4589,8 @@ function DocTranslateModal({ doc, translateLang, setTranslateLang, onClose, docu
         };
         setDocuments(prev => { const next = [...prev, translatedDoc]; LS.set('docs_' + matterId, next); return next; });
         setProgress('');
-        addToast('Translation complete! Saved as "' + translatedDoc.name + '" in Documents.', 'success');
+        setSaved(true);
+        addToast('Translation complete! Saved as "' + outputName + '" in Documents.', 'success');
       };
       reader.readAsDataURL(translatedBlob);
     } catch (err) {
@@ -4569,15 +4614,17 @@ function DocTranslateModal({ doc, translateLang, setTranslateLang, onClose, docu
           </div>
           <div style={{display:'flex', gap:8, marginBottom:16}}>
             <div className="lang-toggle">
-              <button className={translateLang === 'hi' ? 'active' : ''} onClick={()=>{setTranslateLang('hi');setTranslatedText('');}}>English → Hindi</button>
-              <button className={translateLang === 'en' ? 'active' : ''} onClick={()=>{setTranslateLang('en');setTranslatedText('');}}>Hindi → English</button>
+              <button className={translateLang === 'hi' ? 'active' : ''} onClick={()=>{if(!translating){setTranslateLang('hi');setTranslatedText('');setSaved(false);}}}>English → Hindi</button>
+              <button className={translateLang === 'en' ? 'active' : ''} onClick={()=>{if(!translating){setTranslateLang('en');setTranslatedText('');setSaved(false);}}}>Hindi → English</button>
             </div>
           </div>
           <div style={{padding:16, background:'var(--bg-input)', borderRadius:'var(--radius)', border:'1px solid var(--border-light)', marginBottom:12}}>
             <div style={{fontSize:12, color:'var(--text-muted)', marginBottom:4}}>Output file</div>
-            <div style={{fontSize:14, fontWeight:600}}>{outputName.replace(/\.[^.]+$/, '.txt')}</div>
+            <div style={{fontSize:14, fontWeight:600}}>{outputName}</div>
             <div style={{fontSize:12, color:'var(--text-secondary)', marginTop:4}}>
-              Translated via LegalDesk Translator. The translated document will be saved in this matter's Documents section.
+              {outExt === 'docx' || outExt === 'doc'
+                ? 'Saved as Word document with proper Hindi/Unicode font support.'
+                : 'Saved as UTF-8 text file with proper encoding.'}
             </div>
           </div>
           {progress && (
@@ -4586,20 +4633,31 @@ function DocTranslateModal({ doc, translateLang, setTranslateLang, onClose, docu
               {progress}
             </div>
           )}
+          {saved && (
+            <div style={{padding:'8px 12px', background:'var(--success-bg)', borderRadius:'var(--radius-sm)', fontSize:12, color:'var(--success)', marginBottom:8, display:'flex', alignItems:'center', gap:8}}>
+              {Icons.checkCircle} Translation saved to Documents
+            </div>
+          )}
           {translatedText && (
             <div style={{marginTop:8}}>
               <div style={{fontSize:11, fontWeight:600, color:'var(--text-muted)', marginBottom:4}}>PREVIEW</div>
-              <div style={{maxHeight:200, overflowY:'auto', fontSize:12, lineHeight:1.6, padding:'8px 12px', background:'var(--bg-card)', border:'1px solid var(--border)', borderRadius:'var(--radius-sm)', whiteSpace:'pre-wrap'}}>
+              <div style={{maxHeight:200, overflowY:'auto', fontSize:12, lineHeight:1.6, padding:'8px 12px', background:'var(--bg-card)', border:'1px solid var(--border)', borderRadius:'var(--radius-sm)', whiteSpace:'pre-wrap', fontFamily: translateLang === 'hi' ? "'Noto Sans Devanagari', 'Mangal', sans-serif" : 'inherit'}}>
                 {translatedText.slice(0, 1000)}{translatedText.length > 1000 ? '...' : ''}
               </div>
             </div>
           )}
         </div>
         <div className="modal-footer">
-          <button className="btn btn-outline" onClick={onClose}>Close</button>
-          <button className="btn btn-primary" onClick={doTranslate} disabled={translating}>
-            {translating ? 'Translating...' : <>{Icons.translate} Translate & Save</>}
-          </button>
+          <button className="btn btn-outline" onClick={onClose}>{saved ? 'Done' : 'Close'}</button>
+          {!saved ? (
+            <button className="btn btn-primary" onClick={doTranslate} disabled={translating}>
+              {translating ? 'Translating...' : <>{Icons.translate} Translate & Save</>}
+            </button>
+          ) : (
+            <button className="btn btn-success" onClick={onClose}>
+              {Icons.checkCircle} Saved — Close
+            </button>
+          )}
         </div>
       </div>
     </div>
