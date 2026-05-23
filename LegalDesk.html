@@ -3317,6 +3317,7 @@ function Header({ onToggleSidebar, onLogout }) {
   });
   const notifRef = useRef(null);
   const userMenuRef = useRef(null);
+  const [dismissedNotifs, setDismissedNotifs] = useState(() => LS.get('dismissedNotifs', []));
 
   // Build live notifications from matters data
   const liveNotifications = useMemo(() => {
@@ -3392,7 +3393,6 @@ function Header({ onToggleSidebar, onLogout }) {
     causetemplates: 'Cause List Templates',
   };
 
-  const [dismissedNotifs, setDismissedNotifs] = useState(() => LS.get('dismissedNotifs', []));
   const handleMarkAllRead = () => {
     const ids = liveNotifications.filter(n => n.unread).map(n => n.id);
     const newDismissed = [...new Set([...dismissedNotifs, ...ids])];
