@@ -3296,8 +3296,8 @@ function LoginPage({ onLogin }) {
                 <input className="form-input" placeholder="e.g. UP/1234/2015" value={form.barCouncil} onChange={e => setForm({...form, barCouncil: e.target.value})} required />
               </div>
               <div className="form-group">
-                <label className="form-label">AOR / Advocate Roll No. (optional)</label>
-                <input className="form-input" placeholder="e.g. AOR/5678" value={form.rollNo} onChange={e => setForm({...form, rollNo: e.target.value})} />
+                <label className="form-label">Advocate ID / AOR No. <span style={{fontSize:11, color:'var(--text-muted)', fontWeight:400}}>(used for case lookup)</span></label>
+                <input className="form-input" placeholder="e.g. B/A2401/2019 or AOR/5678" value={form.rollNo} onChange={e => setForm({...form, rollNo: e.target.value})} />
               </div>
               <div className="form-group">
                 <label className="form-label">Select Court</label>
@@ -7652,8 +7652,21 @@ function App() {
       setLoadingLiveCases(true);
 
       try {
-        const result = await CourtAPI.getAdvocateCases(user.barCouncil);
+        // Try rollNo (Advocate ID) first since CCMS uses court-specific roll numbers,
+        // then fall back to barCouncil enrollment number
+        const lookupId = user.rollNo || user.barCouncil;
+        let result = await CourtAPI.getAdvocateCases(lookupId);
         if (cancelled) return;
+
+        // If rollNo didn't find cases and barCouncil is different, try that too
+        if ((!result || result.status !== 'success' || result.cases?.length === 0)
+            && user.rollNo && user.barCouncil && user.rollNo !== user.barCouncil) {
+          console.log('[App] No cases with rollNo, trying barCouncil:', user.barCouncil);
+          const fallback = await CourtAPI.getAdvocateCases(user.barCouncil);
+          if (!cancelled && fallback.status === 'success' && fallback.cases?.length > 0) {
+            result = fallback;
+          }
+        }
 
         if (result.status === 'success' && result.cases.length > 0) {
           // Convert API cases to app matter format

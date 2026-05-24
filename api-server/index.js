@@ -256,50 +256,92 @@ async function fetchAdvocateCases(rollNumber, bench = "allahabad") {
   const cached = getCached(cacheKey);
   if (cached) return { ...cached, fromCache: true };
 
+  // Build list of roll number formats to try:
+  // 1. As-is (original input)
+  // 2. If it looks like "B/A2401/2019" → try "A2401/2019" (strip prefix)
+  // 3. If it looks like "UP/2030/2018" (Bar Council format) → try as-is
+  // 4. If it contains "/" → try without any prefix (just number/year)
+  const formatsToTry = [rollNumber];
+  const cleaned = rollNumber.trim();
+
+  // Strip single-letter prefix like "B/" from Advocate IDs (e.g., "B/A2401/2019" → "A2401/2019")
+  if (/^[A-Z]\//.test(cleaned)) {
+    formatsToTry.push(cleaned.substring(2));
+  }
+  // If it has format like "A2401/2019", also try just the number
+  const numYearMatch = cleaned.match(/[A-Z]*(\d+)\/(\d{4})$/);
+  if (numYearMatch) {
+    formatsToTry.push(`${numYearMatch[1]}/${numYearMatch[2]}`);
+  }
+
+  // Deduplicate
+  const uniqueFormats = [...new Set(formatsToTry)];
+  console.log(`[API] Advocate case lookup for "${rollNumber}" — trying formats: ${uniqueFormats.join(", ")}`);
+
   const base = bench === "lucknow" ? CCMS_LKO : CCMS_ALD;
   const url = `${base}/advocate-cases-roll-wise`;
 
-  // Solve CAPTCHA
-  let sessionToken, captchaAnswer;
-  try {
-    const solved = await solveCaptchaForUrl(url, base);
-    sessionToken = solved.sessionToken;
-    captchaAnswer = solved.captchaAnswer;
-    console.log(`[API] CAPTCHA solved for advocate lookup: "${captchaAnswer}" (confidence: ${solved.confidence.toFixed(1)}%)`);
-  } catch (err) {
-    console.error(`[API] CAPTCHA solve failed: ${err.message}`);
-    return { status: "captcha_failed", error: "Could not solve court CAPTCHA. Please try again.", roll_number: rollNumber };
-  }
-
-  const result = await fetchPostForm(url, {
-    roll_no: rollNumber,
-    captcha: captchaAnswer,
-    submit: "Search",
-  }, sessionToken);
-
-  const $ = cheerio.load(result.html);
-
-  // Check for CAPTCHA rejection
-  const errorText = $(".alert-danger, .error, .text-danger").text().trim();
-  if (errorText.toLowerCase().includes("captcha") || errorText.toLowerCase().includes("invalid")) {
-    // Retry once
+  for (const format of uniqueFormats) {
+    // Solve CAPTCHA for each attempt
+    let sessionToken, captchaAnswer;
     try {
-      const retry = await solveCaptchaForUrl(url, base);
-      const retryResult = await fetchPostForm(url, { roll_no: rollNumber, captcha: retry.captchaAnswer, submit: "Search" }, retry.sessionToken);
-      const $r = cheerio.load(retryResult.html);
-      const retryErr = $r(".alert-danger, .error, .text-danger").text().trim();
-      if (!retryErr.toLowerCase().includes("captcha")) {
-        const data = parseAdvocateCases($r, rollNumber, bench);
-        setCache(cacheKey, data, CACHE_TTL.advocate_cases);
-        return data;
-      }
-    } catch (_) {}
-    return { status: "captcha_failed", error: "CAPTCHA verification failed after retry. Please try again." };
+      const solved = await solveCaptchaForUrl(url, base);
+      sessionToken = solved.sessionToken;
+      captchaAnswer = solved.captchaAnswer;
+      console.log(`[API] CAPTCHA solved for advocate lookup (format "${format}"): "${captchaAnswer}" (confidence: ${solved.confidence.toFixed(1)}%)`);
+    } catch (err) {
+      console.error(`[API] CAPTCHA solve failed: ${err.message}`);
+      continue; // Try next format
+    }
+
+    const result = await fetchPostForm(url, {
+      roll_no: format,
+      captcha: captchaAnswer,
+      submit: "Search",
+    }, sessionToken);
+
+    const $ = cheerio.load(result.html);
+
+    // Check for CAPTCHA rejection
+    const errorText = $(".alert-danger, .error, .text-danger").text().trim();
+    if (errorText.toLowerCase().includes("captcha") || errorText.toLowerCase().includes("invalid")) {
+      // Retry once with new CAPTCHA
+      try {
+        const retry = await solveCaptchaForUrl(url, base);
+        const retryResult = await fetchPostForm(url, { roll_no: format, captcha: retry.captchaAnswer, submit: "Search" }, retry.sessionToken);
+        const $r = cheerio.load(retryResult.html);
+        const retryErr = $r(".alert-danger, .error, .text-danger").text().trim();
+        if (!retryErr.toLowerCase().includes("captcha")) {
+          const data = parseAdvocateCases($r, rollNumber, bench);
+          if (data.totalCases > 0) {
+            console.log(`[API] Found ${data.totalCases} cases using format "${format}"`);
+            setCache(cacheKey, data, CACHE_TTL.advocate_cases);
+            return data;
+          }
+        }
+      } catch (_) {}
+      continue; // Try next format
+    }
+
+    const data = parseAdvocateCases($, rollNumber, bench);
+    if (data.totalCases > 0) {
+      console.log(`[API] Found ${data.totalCases} cases using format "${format}"`);
+      setCache(cacheKey, data, CACHE_TTL.advocate_cases);
+      return data;
+    }
+    console.log(`[API] No cases found with format "${format}", trying next...`);
   }
 
-  const data = parseAdvocateCases($, rollNumber, bench);
-  setCache(cacheKey, data, CACHE_TTL.advocate_cases);
-  return data;
+  // None of the formats returned cases
+  console.log(`[API] No cases found for "${rollNumber}" with any format`);
+  return {
+    status: "no_cases_found",
+    rollNumber,
+    bench: bench === "lucknow" ? "Lucknow Bench" : "Allahabad",
+    totalCases: 0,
+    cases: [],
+    fetchedAt: new Date().toISOString(),
+  };
 }
 
 function parseAdvocateCases($, rollNumber, bench) {
