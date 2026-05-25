@@ -2168,6 +2168,24 @@ const CourtAPI = {
     return this._fetch(`/api/news${q}`);
   },
 
+  /** Step 1 of advmgmtsys sync: get a captcha to show the user */
+  async advmgmtsysPrepare() {
+    return this._fetch('/api/advmgmtsys-prepare', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+  },
+
+  /** Step 2 of advmgmtsys sync: submit creds + captcha, get matters back */
+  async advmgmtsysSync({ sessionId, username, password, captcha, reuseAuth }) {
+    return this._fetch('/api/advmgmtsys-sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, username, password, captcha, reuseAuth }),
+    });
+  },
+
   /** Convert raw API case data to the app's Matter format */
   apiCaseToMatter(apiCase, index) {
     const id = 'live_' + (apiCase.caseType || 'X') + '_' + (apiCase.caseNo || index) + '_' + (apiCase.year || '');
@@ -7025,7 +7043,7 @@ function CourtLinksPage() {
 // ACCOUNT SETTINGS
 // ─────────────────────────────────────────────────────────────────────
 function SettingsPage() {
-  const { user, setUser, theme, setTheme, addToast, teamMembers, setTeamMembers } = useContext(AppContext);
+  const { user, setUser, theme, setTheme, addToast, teamMembers, setTeamMembers, setMatters } = useContext(AppContext);
   const [newMemberName, setNewMemberName] = useState('');
   const [newMemberPhone, setNewMemberPhone] = useState('');
   // Editable bench/court — defaults to the suggested bench based on the roll number prefix.
@@ -7033,10 +7051,16 @@ function SettingsPage() {
   const [editingCourt, setEditingCourt] = useState(false);
   const [chosenCourt, setChosenCourt] = useState(user?.court || suggestedCourt || COURTS[0]);
   // advmgmtsys creds stored ONLY in localStorage (not in our DB; not transmitted to backend
-  // until the user explicitly clicks Connect). When implemented in a later sprint, the backend
-  // will use these creds once per fetch and discard them.
+  // until the user explicitly clicks Sync Now). On each sync the backend uses creds once
+  // and never persists them.
   const [advmgmtCreds, setAdvmgmtCreds] = useState(() => LS.get('advmgmtsys_creds', { username: user?.rollNo || '', password: '' }));
   const [showAdvmgmtForm, setShowAdvmgmtForm] = useState(false);
+  // Sync modal state
+  const [syncModal, setSyncModal] = useState(null);
+  // Shape: null | { stage: 'fetching_captcha' | 'captcha_ready' | 'logging_in' | 'done' | 'error',
+  //                 sessionId, captchaPng, captchaText, error, result }
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [syncStatus, setSyncStatus] = useState(LS.get('advmgmtsys_last_sync', null));
 
   const saveCourt = () => {
     const updated = { ...user, court: chosenCourt };
@@ -7060,8 +7084,109 @@ function SettingsPage() {
 
   const clearAdvmgmtCreds = () => {
     LS.remove('advmgmtsys_creds');
+    LS.remove('advmgmtsys_last_sync');
     setAdvmgmtCreds({ username: user?.rollNo || '', password: '' });
+    setSyncStatus(null);
     addToast('Advmgmtsys credentials cleared from this browser', 'info');
+  };
+
+  // Start a sync: fetch a captcha, then show modal asking user to type it.
+  const startAdvmgmtSync = async (reuseAuthFirst = true) => {
+    const saved = LS.get('advmgmtsys_creds');
+    if (!saved?.username || !saved?.password) {
+      addToast('Save your advmgmtsys credentials first', 'error');
+      return;
+    }
+    setSyncBusy(true);
+
+    // Fast path — try reusing a cached auth session first (skip captcha entirely).
+    if (reuseAuthFirst) {
+      try {
+        const r = await CourtAPI.advmgmtsysSync({ username: saved.username });
+        if (r.status === 'success') {
+          applySyncResult(r);
+          setSyncBusy(false);
+          return;
+        }
+        // Otherwise fall through to captcha flow.
+      } catch (_) {}
+    }
+
+    setSyncModal({ stage: 'fetching_captcha' });
+    try {
+      const prep = await CourtAPI.advmgmtsysPrepare();
+      if (prep.status !== 'ready') {
+        setSyncModal({ stage: 'error', error: prep.error || 'Could not fetch captcha from court site.' });
+        setSyncBusy(false);
+        return;
+      }
+      setSyncModal({ stage: 'captcha_ready', sessionId: prep.sessionId, captchaPng: prep.captchaPng, captchaText: '' });
+    } catch (err) {
+      setSyncModal({ stage: 'error', error: err.message });
+    } finally {
+      setSyncBusy(false);
+    }
+  };
+
+  const submitAdvmgmtSync = async () => {
+    const saved = LS.get('advmgmtsys_creds');
+    if (!syncModal?.sessionId || !syncModal?.captchaText) return;
+    setSyncModal(prev => ({ ...prev, stage: 'logging_in' }));
+    try {
+      const r = await CourtAPI.advmgmtsysSync({
+        sessionId: syncModal.sessionId,
+        username: saved.username,
+        password: saved.password,
+        captcha: syncModal.captchaText.trim(),
+      });
+      if (r.status === 'success') {
+        applySyncResult(r);
+      } else if (r.status === 'logged_in_but_no_cases') {
+        const note = `Login OK but no matters on tried URLs (${(r.triedUrls||[]).slice(0,3).map(t=>t.url.split('/').pop()).join(', ')}). The scraper needs an adjustment for advmgmtsys's exact dashboard URL — please share this with support.`;
+        setSyncStatus({ at: Date.now(), error: note });
+        LS.set('advmgmtsys_last_sync', { at: Date.now(), error: note });
+        setSyncModal({ stage: 'done', result: r, note });
+        addToast('Logged in but matters not found — please report', 'info');
+      } else {
+        setSyncModal({ stage: 'error', error: r.error || 'Login failed', detail: r });
+        setSyncStatus({ at: Date.now(), error: r.error });
+        LS.set('advmgmtsys_last_sync', { at: Date.now(), error: r.error });
+      }
+    } catch (err) {
+      setSyncModal({ stage: 'error', error: err.message });
+    }
+  };
+
+  const applySyncResult = (r) => {
+    // Convert advmgmtsys cases to the app's matter shape and merge.
+    const liveCases = (r.cases || []).map((c, i) => {
+      const m = CourtAPI.apiCaseToMatter ? CourtAPI.apiCaseToMatter(c, i) : {
+        id: 'advm_' + (c.caseRef || i),
+        caseRef: c.caseRef,
+        caseType: c.caseType || '',
+        caseNo: c.caseNo || '',
+        year: c.year || '',
+        title: c.title || c.parties || '',
+        court: c.court || 'Allahabad High Court (Lucknow Bench)',
+        status: c.status || 'PENDING',
+        nextHearing: c.nextHearing || null,
+      };
+      m._liveData = true;
+      m._source = 'advmgmtsys';
+      return m;
+    });
+    if (typeof setMatters === 'function') {
+      setMatters(prev => {
+        // Replace any prior advmgmtsys-sourced matters, keep manually-added ones.
+        const keep = (prev || []).filter(p => p._source !== 'advmgmtsys' && !(typeof p.id === 'string' && p.id.startsWith('live_')));
+        return [...liveCases, ...keep];
+      });
+    }
+    const status = { at: Date.now(), count: liveCases.length, foundAt: r.foundAt };
+    setSyncStatus(status);
+    LS.set('advmgmtsys_last_sync', status);
+    setSyncModal({ stage: 'done', result: r });
+    addToast(`Synced ${liveCases.length} matters from advmgmtsys`, 'success');
   };
 
   const handleLogout = async () => {
@@ -7166,10 +7291,24 @@ function SettingsPage() {
               </button>
             )}
             {!showAdvmgmtForm && LS.get('advmgmtsys_creds') && (
-              <div style={{display:'flex', gap:8, alignItems:'center'}}>
-                <span style={{fontSize:12, color:'var(--success)'}}>✓ Credentials saved for <code>{LS.get('advmgmtsys_creds')?.username}</code></span>
-                <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowAdvmgmtForm(true)} style={{marginLeft:'auto'}}>Edit</button>
-                <button type="button" className="btn btn-ghost btn-sm" style={{color:'var(--danger)'}} onClick={clearAdvmgmtCreds}>Clear</button>
+              <div>
+                <div style={{display:'flex', gap:8, alignItems:'center', marginBottom:10}}>
+                  <span style={{fontSize:12, color:'var(--success)'}}>✓ Credentials saved for <code>{LS.get('advmgmtsys_creds')?.username}</code></span>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowAdvmgmtForm(true)} style={{marginLeft:'auto'}}>Edit</button>
+                  <button type="button" className="btn btn-ghost btn-sm" style={{color:'var(--danger)'}} onClick={clearAdvmgmtCreds}>Clear</button>
+                </div>
+                <div style={{display:'flex', gap:8, alignItems:'center'}}>
+                  <button type="button" className="btn btn-primary btn-sm" onClick={() => startAdvmgmtSync(true)} disabled={syncBusy}>
+                    {syncBusy ? 'Working…' : (Icons.refresh || '🔄') + ' Sync Now'}
+                  </button>
+                  {syncStatus?.at && (
+                    <span style={{fontSize:11, color:'var(--text-muted)'}}>
+                      Last sync: {new Date(syncStatus.at).toLocaleString('en-IN')}
+                      {syncStatus.count !== undefined && ` · ${syncStatus.count} matters`}
+                      {syncStatus.error && ` · ⚠ ${syncStatus.error.slice(0, 80)}`}
+                    </span>
+                  )}
+                </div>
               </div>
             )}
             {showAdvmgmtForm && (
@@ -7240,6 +7379,90 @@ function SettingsPage() {
           </button>
         </div>
       </div>
+
+      {/* ──────── advmgmtsys captcha + sync modal ──────── */}
+      {syncModal && (
+        <div onClick={(e) => { if (e.target === e.currentTarget) setSyncModal(null); }} style={{
+          position:'fixed', inset:0, background:'rgba(0,0,0,0.45)', zIndex:1000,
+          display:'flex', alignItems:'center', justifyContent:'center', padding:20,
+        }}>
+          <div style={{background:'var(--bg-card)', borderRadius:'var(--radius)', maxWidth:480, width:'100%', padding:24, boxShadow:'0 20px 60px rgba(0,0,0,0.3)'}}>
+            <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16}}>
+              <h3 style={{fontSize:18, fontWeight:700, margin:0}}>Sync from Allahabad HC</h3>
+              <button className="btn btn-ghost btn-sm" onClick={() => setSyncModal(null)}>✕</button>
+            </div>
+
+            {syncModal.stage === 'fetching_captcha' && (
+              <div style={{padding:'40px 0', textAlign:'center', color:'var(--text-secondary)'}}>
+                <div className="spinner" style={{margin:'0 auto 16px', width:32, height:32, border:'3px solid var(--border)', borderTopColor:'var(--primary)', borderRadius:'50%', animation:'spin 0.8s linear infinite'}} />
+                Fetching captcha from advmgmtsys…
+              </div>
+            )}
+
+            {syncModal.stage === 'captcha_ready' && (
+              <div>
+                <p style={{fontSize:13, color:'var(--text-secondary)', marginBottom:14, lineHeight:1.5}}>
+                  Type the characters you see below. (Auto-OCR isn't reliable for this captcha style.)
+                </p>
+                <div style={{padding:14, background:'var(--bg-elevated)', borderRadius:'var(--radius)', textAlign:'center', marginBottom:14}}>
+                  <img src={syncModal.captchaPng} alt="captcha" style={{maxWidth:'100%', height:'auto', imageRendering:'pixelated'}} />
+                  <div style={{marginTop:8}}>
+                    <button type="button" className="btn btn-ghost btn-sm" onClick={() => startAdvmgmtSync(false)}>Refresh captcha</button>
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Captcha (5 characters)</label>
+                  <input className="form-input" autoFocus value={syncModal.captchaText} maxLength={20}
+                    onChange={e => setSyncModal(prev => ({ ...prev, captchaText: e.target.value }))}
+                    onKeyDown={e => { if (e.key === 'Enter' && syncModal.captchaText.length >= 3) submitAdvmgmtSync(); }}
+                    placeholder="e.g. xcd6g" />
+                </div>
+                <div style={{display:'flex', gap:8, justifyContent:'flex-end', marginTop:14}}>
+                  <button className="btn btn-ghost" onClick={() => setSyncModal(null)}>Cancel</button>
+                  <button className="btn btn-primary" disabled={!syncModal.captchaText || syncModal.captchaText.length < 3} onClick={submitAdvmgmtSync}>
+                    Submit & Sync
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {syncModal.stage === 'logging_in' && (
+              <div style={{padding:'40px 0', textAlign:'center', color:'var(--text-secondary)'}}>
+                <div className="spinner" style={{margin:'0 auto 16px', width:32, height:32, border:'3px solid var(--border)', borderTopColor:'var(--primary)', borderRadius:'50%', animation:'spin 0.8s linear infinite'}} />
+                Logging in and fetching your matters…
+              </div>
+            )}
+
+            {syncModal.stage === 'done' && (
+              <div>
+                <div style={{padding:'20px 0', textAlign:'center'}}>
+                  <div style={{fontSize:36, marginBottom:8, color:'var(--success)'}}>✓</div>
+                  <div style={{fontWeight:700, fontSize:16, marginBottom:6}}>
+                    {syncModal.result?.totalCases > 0
+                      ? `Synced ${syncModal.result.totalCases} matters`
+                      : 'Logged in successfully'}
+                  </div>
+                  {syncModal.note && <div style={{fontSize:12, color:'var(--text-secondary)', lineHeight:1.5, padding:'10px 14px', background:'var(--warning-bg)', borderRadius:'var(--radius)', marginTop:10, textAlign:'left'}}>{syncModal.note}</div>}
+                  {syncModal.result?.foundAt && <div style={{fontSize:11, color:'var(--text-muted)', marginTop:8, fontFamily:'monospace'}}>Source: {syncModal.result.foundAt}</div>}
+                </div>
+                <button className="btn btn-primary btn-block" onClick={() => setSyncModal(null)}>Done</button>
+              </div>
+            )}
+
+            {syncModal.stage === 'error' && (
+              <div>
+                <div style={{padding:'14px 16px', background:'var(--danger-bg)', color:'var(--danger)', borderRadius:'var(--radius)', fontSize:13, marginBottom:14, lineHeight:1.5}}>
+                  <strong>Sync failed.</strong><br />{syncModal.error}
+                </div>
+                <div style={{display:'flex', gap:8, justifyContent:'flex-end'}}>
+                  <button className="btn btn-ghost" onClick={() => setSyncModal(null)}>Close</button>
+                  <button className="btn btn-primary" onClick={() => startAdvmgmtSync(false)}>Try again</button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
