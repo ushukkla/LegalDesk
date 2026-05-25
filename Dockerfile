@@ -47,6 +47,7 @@ COPY allahabad-hc-mcp/package.json ./allahabad-hc-mcp/
 # Runtime configuration
 ENV NODE_ENV=production
 ENV PORT=3001
+ENV TZ=Asia/Kolkata
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \

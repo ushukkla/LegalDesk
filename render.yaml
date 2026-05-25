@@ -25,3 +25,5 @@ services:
         value: production
       - key: PORT
         value: "3001"
+      - key: TZ
+        value: "Asia/Kolkata"
