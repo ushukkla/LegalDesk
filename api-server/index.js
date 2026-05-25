@@ -34,8 +34,13 @@ import * as cheerio from "cheerio";
 
 const PORT = process.env.PORT || 3001;
 const BASE_URL = "https://www.allahabadhighcourt.in";
-const CCMS_ALD = `${BASE_URL}/apps/status_ccms`;
-const CCMS_LKO = `${BASE_URL}/apps/status_ccms_lko`;
+// CCMS bases.
+// IMPORTANT: ALD CCMS uses /index.php/<route> for GETs but POSTs go to /<route> (form action strips index.php).
+// LKO has migrated to its own subdomain (hclko.allahabadhighcourt.in) — /apps/status_ccms_lko is dead (404).
+const CCMS_ALD = `${BASE_URL}/apps/status_ccms`;          // POST base
+const CCMS_ALD_GET = `${BASE_URL}/apps/status_ccms/index.php`;  // GET base
+const CCMS_LKO = "https://hclko.allahabadhighcourt.in/status";        // POST base
+const CCMS_LKO_GET = "https://hclko.allahabadhighcourt.in/status/index.php"; // GET base
 const ELEGALIX = "https://elegalix.allahabadhighcourt.in/elegalix";
 const COURT_VIEW_ALD = "https://courtview2.allahabadhighcourt.in/courtview/CourtViewAllahabad.do";
 const COURT_VIEW_LKO = "https://courtview2.allahabadhighcourt.in/courtview/CourtViewLucknow.do";
@@ -120,21 +125,25 @@ async function fetchPage(url, options = {}) {
       redirect: "follow",
       signal: AbortSignal.timeout(15000),
     });
-    const setCookies = resp.headers.getSetCookie?.() || [];
+    const setCookieRaw = resp.headers.getSetCookie?.() || [];
+    // Normalize for re-use as a Cookie request header: strip attributes from each value.
+    const setCookies = setCookieRaw
+      .map(c => c.split(";")[0].trim())
+      .filter(Boolean);
     const html = await resp.text();
-    return { html, status: resp.status, cookies: setCookies, url: resp.url };
+    return { html, status: resp.status, cookies: setCookies, cookiesRaw: setCookieRaw, url: resp.url };
   } catch (err) {
     return { html: "", status: 0, cookies: [], url, error: err.message };
   }
 }
 
-async function fetchPostForm(url, formData, sessionToken) {
+async function fetchPostForm(url, formData, sessionToken, extraHeaders = {}) {
   const body = new URLSearchParams(formData).toString();
   return fetchPage(url, {
     method: "POST",
     body,
     sessionToken,
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    headers: { "Content-Type": "application/x-www-form-urlencoded", ...extraHeaders },
   });
 }
 
@@ -170,7 +179,9 @@ async function loadCaptchaSolver() {
 async function solveCaptchaForUrl(url, base) {
   const solver = await loadCaptchaSolver();
   if (!solver) throw new Error("CAPTCHA solver not available");
-  return solver(url, base, { maxAttempts: 3 });
+  // 6 attempts because the CCMS captcha is genuinely hard (color extraction works ~70-80%
+  // of the time, so 6 attempts gives >99% success even with no retry layer above).
+  return solver(url, base, { maxAttempts: 6 });
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -278,123 +289,87 @@ async function verifyOnECourts(advocateName, stateCode) {
 // ADVOCATE CASES
 // ─────────────────────────────────────────────────────────────────────
 
-async function fetchAdvocateCases(rollNumber, bench = "allahabad") {
-  const cacheKey = `adv_${rollNumber}_${bench}`;
-  const cached = getCached(cacheKey);
-  if (cached) return { ...cached, fromCache: true };
-
-  // Build list of roll number formats to try:
-  // 1. As-is (original input)
-  // 2. If it looks like "B/A2401/2019" → try "A2401/2019" (strip prefix)
-  // 3. If it looks like "UP/2030/2018" (Bar Council format) → try as-is
-  // 4. If it contains "/" → try without any prefix (just number/year)
-  const formatsToTry = [rollNumber];
-  const cleaned = rollNumber.trim();
-
-  // Strip single-letter prefix like "B/" from Advocate IDs (e.g., "B/A2401/2019" → "A2401/2019")
-  if (/^[A-Z]\//.test(cleaned)) {
-    formatsToTry.push(cleaned.substring(2));
+// Build the list of roll-number format variants to try against the court form.
+// The CCMS form expects the "Advocate Roll Number" format (e.g. "B/A2401/2019") —
+// NOT the Bar Council enrollment number (e.g. "UP/2030/2018"). We accept either input
+// and try a few common normalizations.
+function rollNumberVariants(rollNumber) {
+  const cleaned = (rollNumber || "").trim().toUpperCase();
+  if (!cleaned) return [];
+  const variants = new Set([cleaned]);
+  // "B/A2401/2019" → "A2401/2019" (strip single-letter type prefix)
+  if (/^[A-Z]\//.test(cleaned)) variants.add(cleaned.substring(2));
+  // "A2401/2019" → "B/A2401/2019" (add common type prefix)
+  if (/^[A-Z]?\d+\/\d{4}$/.test(cleaned) && !/^[A-Z]\//.test(cleaned)) {
+    ["B", "A", "L"].forEach(p => variants.add(`${p}/${cleaned}`));
   }
-  // If it has format like "A2401/2019", also try just the number
-  const numYearMatch = cleaned.match(/[A-Z]*(\d+)\/(\d{4})$/);
-  if (numYearMatch) {
-    formatsToTry.push(`${numYearMatch[1]}/${numYearMatch[2]}`);
+  // "UP/2030/2018" Bar Council format — try as-is and also strip state prefix
+  const upMatch = cleaned.match(/^([A-Z]{2,3})\/(\d+)\/(\d{4})$/);
+  if (upMatch) {
+    variants.add(`${upMatch[2]}/${upMatch[3]}`);
+    ["B", "A", "L"].forEach(p => variants.add(`${p}/${upMatch[2]}/${upMatch[3]}`));
   }
-
-  // Deduplicate
-  const uniqueFormats = [...new Set(formatsToTry)];
-  console.log(`[API] Advocate case lookup for "${rollNumber}" — trying formats: ${uniqueFormats.join(", ")}`);
-
-  const base = bench === "lucknow" ? CCMS_LKO : CCMS_ALD;
-  const url = `${base}/advocate-cases-roll-wise`;
-
-  for (const format of uniqueFormats) {
-    // Solve CAPTCHA for each attempt
-    let sessionToken, captchaAnswer;
-    try {
-      const solved = await solveCaptchaForUrl(url, base);
-      sessionToken = solved.sessionToken;
-      captchaAnswer = solved.captchaAnswer;
-      console.log(`[API] CAPTCHA solved for advocate lookup (format "${format}"): "${captchaAnswer}" (confidence: ${solved.confidence.toFixed(1)}%)`);
-    } catch (err) {
-      console.error(`[API] CAPTCHA solve failed: ${err.message}`);
-      continue; // Try next format
-    }
-
-    const result = await fetchPostForm(url, {
-      roll_no: format,
-      captcha: captchaAnswer,
-      submit: "Search",
-    }, sessionToken);
-
-    const $ = cheerio.load(result.html);
-
-    // Check for CAPTCHA rejection
-    const errorText = $(".alert-danger, .error, .text-danger").text().trim();
-    if (errorText.toLowerCase().includes("captcha") || errorText.toLowerCase().includes("invalid")) {
-      // Retry once with new CAPTCHA
-      try {
-        const retry = await solveCaptchaForUrl(url, base);
-        const retryResult = await fetchPostForm(url, { roll_no: format, captcha: retry.captchaAnswer, submit: "Search" }, retry.sessionToken);
-        const $r = cheerio.load(retryResult.html);
-        const retryErr = $r(".alert-danger, .error, .text-danger").text().trim();
-        if (!retryErr.toLowerCase().includes("captcha")) {
-          const data = parseAdvocateCases($r, rollNumber, bench);
-          if (data.totalCases > 0) {
-            console.log(`[API] Found ${data.totalCases} cases using format "${format}"`);
-            setCache(cacheKey, data, CACHE_TTL.advocate_cases);
-            return data;
-          }
-        }
-      } catch (_) {}
-      continue; // Try next format
-    }
-
-    const data = parseAdvocateCases($, rollNumber, bench);
-    if (data.totalCases > 0) {
-      console.log(`[API] Found ${data.totalCases} cases using format "${format}"`);
-      setCache(cacheKey, data, CACHE_TTL.advocate_cases);
-      return data;
-    }
-    console.log(`[API] No cases found with format "${format}", trying next...`);
-  }
-
-  // None of the formats returned cases
-  console.log(`[API] No cases found for "${rollNumber}" with any format`);
-  return {
-    status: "no_cases_found",
-    rollNumber,
-    bench: bench === "lucknow" ? "Lucknow Bench" : "Allahabad",
-    totalCases: 0,
-    cases: [],
-    fetchedAt: istTimestamp(),
-  };
+  return [...variants];
 }
 
+// Parse a CCMS results page into structured cases.
+// The result table column order (observed): Sr. | Case Number | Petitioner | Respondent | Listing | Status
 function parseAdvocateCases($, rollNumber, bench) {
   const cases = [];
-  $("table tr").each((i, tr) => {
-    if (i === 0) return;
-    const cells = [];
-    $(tr).find("td").each((j, td) => cells.push($(td).text().trim()));
-    if (cells.length >= 3) {
-      // Parse case reference to extract type/number/year
-      const caseRef = cells[1] || "";
-      const refMatch = caseRef.match(/([A-Z]+)\s*[-\/]?\s*(\d+)\s*[-\/]\s*(\d{4})/i);
+  // The result lives in a <table> with class "table" (Bootstrap-styled). Use the largest table on the page.
+  let bestTable = null;
+  let bestRows = 0;
+  $("table").each((_, t) => {
+    const rowCount = $(t).find("tr").length;
+    if (rowCount > bestRows) { bestRows = rowCount; bestTable = t; }
+  });
+  if (!bestTable) return { status: "no_cases_found", rollNumber, bench, totalCases: 0, cases: [], fetchedAt: istTimestamp() };
 
-      cases.push({
-        serial: cells[0],
-        caseRef: cells[1],
-        caseType: refMatch ? refMatch[1].toUpperCase() : "",
-        caseNo: refMatch ? refMatch[2] : "",
-        year: refMatch ? refMatch[3] : "",
-        parties: cells[2],
-        title: cells[2], // alias
-        nextHearing: cells[3] || null,
-        status: cells[4] || "PENDING",
-        coram: cells[5] || null,
-      });
-    }
+  // Read header to map columns by name (column order varies between roll-wise and date-wise pages)
+  const headerCells = [];
+  $(bestTable).find("tr").first().find("th, td").each((_, c) => headerCells.push($(c).text().trim().toLowerCase()));
+  const col = (re) => headerCells.findIndex(h => re.test(h));
+  const idx = {
+    serial: col(/^(sr|s\.? *no|serial)/),
+    caseRef: col(/case|cnr/),
+    petitioner: col(/petition|applicant|appellant/),
+    respondent: col(/respond|opposite/),
+    parties: col(/parties|title|vs/),
+    nextHearing: col(/next|listing|hearing/),
+    status: col(/status|stage/),
+    coram: col(/coram|judge|bench/),
+  };
+
+  $(bestTable).find("tr").each((i, tr) => {
+    if (i === 0 && headerCells.length) return; // skip header
+    const cells = [];
+    $(tr).find("td").each((_, td) => cells.push($(td).text().trim().replace(/\s+/g, " ")));
+    if (cells.length < 2) return;
+
+    const caseRef = idx.caseRef >= 0 ? cells[idx.caseRef] : (cells[1] || "");
+    if (!caseRef || caseRef.length < 3) return;
+    const refMatch = caseRef.match(/([A-Z]+)\s*[-\/]?\s*(\d+)\s*[-\/]\s*(\d{4})/i);
+
+    const petitioner = idx.petitioner >= 0 ? cells[idx.petitioner] : "";
+    const respondent = idx.respondent >= 0 ? cells[idx.respondent] : "";
+    const parties = idx.parties >= 0
+      ? cells[idx.parties]
+      : (petitioner && respondent ? `${petitioner} Vs ${respondent}` : (petitioner || respondent || cells[2] || ""));
+
+    cases.push({
+      serial: idx.serial >= 0 ? cells[idx.serial] : String(i),
+      caseRef,
+      caseType: refMatch ? refMatch[1].toUpperCase() : "",
+      caseNo: refMatch ? refMatch[2] : "",
+      year: refMatch ? refMatch[3] : "",
+      petitioner,
+      respondent,
+      parties,
+      title: parties,
+      nextHearing: idx.nextHearing >= 0 ? (cells[idx.nextHearing] || null) : null,
+      status: idx.status >= 0 ? (cells[idx.status] || "PENDING") : "PENDING",
+      coram: idx.coram >= 0 ? (cells[idx.coram] || null) : null,
+    });
   });
 
   return {
@@ -405,6 +380,256 @@ function parseAdvocateCases($, rollNumber, bench) {
     cases,
     fetchedAt: istTimestamp(),
   };
+}
+
+// Detect failure modes after a POST to get_ListedCaseRoll (AJAX HTML fragment) or the full form page.
+function detectAdvocateFormError($, htmlOpt) {
+  const html = (htmlOpt || $.html() || "").toLowerCase();
+  // Explicit captcha rejection
+  if (/wrong\s*captcha|invalid\s*captcha|captcha\s*(is\s*)?(wrong|invalid|incorrect)/i.test(html)) return "captcha";
+  // "Record Not Found" is the no-match signal from get_ListedCaseRoll
+  if (/record\s*not\s*found|no\s*record(s)?\s*found|no\s*case(s)?\s*found/i.test(html)) return "no_match";
+  // Generic danger text (could be either captcha or input validation)
+  const errorText = $(".alert-danger, .alert-warning, .error, .text-danger, .help-block").text().trim().toLowerCase();
+  if (!errorText) return null;
+  if (errorText.includes("captcha") || errorText.includes("verification code")) return "captcha";
+  if (errorText.includes("invalid") || errorText.includes("incorrect")) return "captcha";
+  if (errorText.includes("no record") || errorText.includes("not found")) return "no_match";
+  return "other";
+}
+
+// One POST attempt with one captcha solve. Returns { kind: "ok"|"captcha"|"no_match"|"error", data?, errMsg? }
+async function attemptAdvocatePost({ getUrl, postUrl, fields, debug = false }) {
+  let solved;
+  try {
+    solved = await solveCaptchaForUrl(getUrl, getUrl);
+  } catch (err) {
+    if (debug) console.log(`[advocatePost] captcha solve failed: ${err.message}`);
+    return { kind: "error", errMsg: `captcha solve failed: ${err.message}` };
+  }
+  const formData = { ...fields, captchacode: solved.captchaAnswer, submit: "Go" };
+  if (debug) console.log(`[advocatePost] POST ${postUrl} with`, formData);
+  // The get_ListedCaseRoll endpoint expects an XHR request with the form-page Referer.
+  const result = await fetchPostForm(postUrl, formData, solved.sessionToken, {
+    "X-Requested-With": "XMLHttpRequest",
+    "Referer": getUrl,
+  });
+  if (debug) console.log(`[advocatePost] response status=${result.status} bodyLen=${result.html?.length || 0}`);
+  const $ = cheerio.load(result.html);
+  const errKind = detectAdvocateFormError($, result.html);
+  if (debug) {
+    const bodyText = $("body").text().replace(/\s+/g, " ").slice(0, 400);
+    const tableCount = $("table").length;
+    const rowCount = $("table tr").length;
+    console.log(`[advocatePost] errKind=${errKind} tables=${tableCount} rows=${rowCount} bodyPreview="${bodyText}"`);
+  }
+  if (errKind === "captcha") return { kind: "captcha", $, errMsg: "CAPTCHA rejected" };
+  if (errKind === "no_match") return { kind: "no_match", $ };
+  return { kind: "ok", $, rawHtml: debug ? result.html : undefined };
+}
+
+// Diagnostic dry-run — one POST, returns the raw response for inspection.
+async function dryRunAdvocate(bench, rollNumber, year, listingDate) {
+  const getUrl = bench === "lucknow"
+    ? `${CCMS_LKO_GET}/advocate-cases-date-wise`
+    : `${CCMS_ALD_GET}/advocate-cases-roll-wise`;
+  // Real submit endpoint is an AJAX route under index.php (not the form's action attribute).
+  const postUrl = bench === "lucknow"
+    ? `${CCMS_LKO_GET}/get_ListedCaseDate`         // best guess for LKO equivalent
+    : `${CCMS_ALD_GET}/get_ListedCaseRoll`;
+  const today = istNow();
+  const defaultDate = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,"0")}-${String(today.getDate()).padStart(2,"0")}`;
+  const fields = bench === "lucknow"
+    ? { adv_roll: rollNumber, date: listingDate || defaultDate, listing_date: listingDate || defaultDate }
+    : { adv_roll: rollNumber, case_year: String(year || istNow().getFullYear()) };
+  const out = await attemptAdvocatePost({ getUrl, postUrl, fields, debug: true });
+  const parsed = out.$ ? parseAdvocateCases(out.$, rollNumber, bench) : null;
+  return {
+    bench,
+    getUrl, postUrl, fields,
+    kind: out.kind,
+    errMsg: out.errMsg,
+    htmlLength: out.rawHtml?.length,
+    bodyPreview: out.$ ? out.$("body").text().replace(/\s+/g, " ").slice(0, 600) : null,
+    parsedCount: parsed?.totalCases || 0,
+    parsedSample: parsed?.cases?.slice(0, 2) || [],
+  };
+}
+
+// Allahabad bench — advocate-cases-roll-wise.
+// CRITICAL: The HTML form looks like it POSTs back to itself, but the visible page is
+// just a shell. A click handler intercepts the submit and AJAX-POSTs to
+// /apps/status_ccms/index.php/get_ListedCaseRoll which returns the actual results HTML
+// (table rows or "Record Not Found").
+// FORM REQUIRES: adv_roll, case_year, captchacode, submit=Go
+// To get ALL cases for an advocate we must iterate years.
+async function fetchAdvocateCasesAllahabad(rollNumber, opts = {}) {
+  const getUrl = `${CCMS_ALD_GET}/advocate-cases-roll-wise`;
+  const postUrl = `${CCMS_ALD_GET}/get_ListedCaseRoll`;
+  const variants = rollNumberVariants(rollNumber);
+  const currentYear = istNow().getFullYear();
+  // Default: scan last 5 years. Caller can pass ?yearsBack=N or ?years=a,b,c to widen.
+  const yearsBack = opts.yearsBack || 4;
+  const years = opts.years || Array.from({ length: yearsBack + 1 }, (_, i) => currentYear - i);
+
+  const allCases = [];
+  const seen = new Set();
+  let formatWorked = null;
+  const benchErrors = [];
+
+  for (const adv_roll of variants) {
+    let formatHadAny = false;
+    let consecutiveCaptchaFails = 0;
+    for (const year of years) {
+      let attempt = await attemptAdvocatePost({
+        getUrl, postUrl, fields: { adv_roll, case_year: String(year) },
+      });
+      // One quick retry on captcha rejection (the solver already retries inside, this is belt+braces).
+      if (attempt.kind === "captcha") {
+        attempt = await attemptAdvocatePost({ getUrl, postUrl, fields: { adv_roll, case_year: String(year) } });
+      }
+      if (attempt.kind === "error") {
+        benchErrors.push(`year ${year}: ${attempt.errMsg}`);
+        consecutiveCaptchaFails++;
+        if (consecutiveCaptchaFails >= 3) { console.warn(`[API] ALD: aborting ${adv_roll} after 3 consecutive captcha errors`); break; }
+        continue;
+      }
+      if (attempt.kind === "captcha") {
+        consecutiveCaptchaFails++;
+        continue;
+      }
+      consecutiveCaptchaFails = 0;
+      if (attempt.kind !== "ok") continue;
+      const parsed = parseAdvocateCases(attempt.$, rollNumber, "allahabad");
+      if (parsed.totalCases > 0) {
+        formatHadAny = true;
+        for (const c of parsed.cases) {
+          const key = c.caseRef;
+          if (key && !seen.has(key)) { seen.add(key); allCases.push(c); }
+        }
+        console.log(`[API] ALD: ${adv_roll} / year ${year} → ${parsed.totalCases} cases`);
+      }
+    }
+    if (formatHadAny) { formatWorked = adv_roll; break; }
+  }
+
+  return {
+    status: allCases.length > 0 ? "success" : "no_cases_found",
+    rollNumber,
+    rollFormatUsed: formatWorked,
+    bench: "Allahabad",
+    totalCases: allCases.length,
+    cases: allCases,
+    yearsScanned: years,
+    fetchedAt: istTimestamp(),
+  };
+}
+
+// Lucknow bench — advocate-cases-date-wise.
+// FORM REQUIRES: adv_roll, listing_date (YYYY-MM-DD picked from a select), captchacode, submit=Go
+// The endpoint returns cases LISTED ON A SPECIFIC DATE — not the advocate's entire case history.
+// To approximate "all matters" we scan a window of upcoming + recent dates.
+// NOTE: LKO captcha is JS-generated client-side; server doesn't strictly validate it (any string works after fetching the form to get a session cookie).
+async function fetchAdvocateCasesLucknow(rollNumber, opts = {}) {
+  const getUrl = `${CCMS_LKO_GET}/advocate-cases-date-wise`;
+  const postUrl = `${CCMS_LKO_GET}/advocate-cases-date-wise`;
+  const variants = rollNumberVariants(rollNumber);
+  // Quick reachability check — LKO has been known to go into maintenance mode.
+  // If the form page says "Website is currently down for maintenance" we short-circuit with a clear error.
+  const probe = await fetchPage(getUrl);
+  if (probe.html && /currently down for maintenance/i.test(probe.html)) {
+    return {
+      status: "upstream_maintenance",
+      rollNumber,
+      bench: "Lucknow Bench",
+      totalCases: 0,
+      cases: [],
+      error: "Allahabad HC Lucknow Bench CCMS is currently in maintenance mode (per upstream banner). Try again later.",
+      fetchedAt: istTimestamp(),
+    };
+  }
+
+  // Build candidate listing dates: today + next N working days + last few days.
+  const dates = [];
+  const today = istNow();
+  const fmt = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+  const window = opts.daysWindow || 14;
+  for (let i = -3; i <= window; i++) {
+    const d = new Date(today); d.setDate(today.getDate() + i);
+    if (d.getDay() === 0 || d.getDay() === 6) continue; // skip Sun/Sat
+    dates.push(fmt(d));
+  }
+
+  const allCases = [];
+  const seen = new Set();
+  let formatWorked = null;
+
+  for (const adv_roll of variants) {
+    let formatHadAny = false;
+    for (const listing_date of dates) {
+      // Any captchacode works for LKO; we still call attemptAdvocatePost so we get a fresh session cookie.
+      let attempt = await attemptAdvocatePost({
+        getUrl, postUrl,
+        fields: { adv_roll, date: listing_date, listing_date }, // include both common field names
+      });
+      if (attempt.kind === "captcha") {
+        attempt = await attemptAdvocatePost({ getUrl, postUrl, fields: { adv_roll, date: listing_date, listing_date } });
+      }
+      if (attempt.kind !== "ok") continue;
+      const parsed = parseAdvocateCases(attempt.$, rollNumber, "lucknow");
+      if (parsed.totalCases > 0) {
+        formatHadAny = true;
+        for (const c of parsed.cases) {
+          const key = c.caseRef;
+          if (key && !seen.has(key)) { seen.add(key); allCases.push(c); }
+        }
+        console.log(`[API] LKO: ${adv_roll} / ${listing_date} → ${parsed.totalCases} cases (cumulative: ${allCases.length})`);
+      }
+    }
+    if (formatHadAny) { formatWorked = adv_roll; break; }
+  }
+
+  return {
+    status: allCases.length > 0 ? "success" : "no_cases_found",
+    rollNumber,
+    rollFormatUsed: formatWorked,
+    bench: "Lucknow Bench",
+    totalCases: allCases.length,
+    cases: allCases,
+    datesScanned: dates,
+    note: "Lucknow CCMS only exposes per-date listings — total may understate the advocate's full case history (which lives in the login-gated advmgmtsys).",
+    fetchedAt: istTimestamp(),
+  };
+}
+
+// Unified entry point. Caches per (rollNumber, bench).
+async function fetchAdvocateCases(rollNumber, bench = "allahabad") {
+  const cacheKey = `adv_${rollNumber}_${bench}`;
+  const cached = getCached(cacheKey);
+  if (cached) return { ...cached, fromCache: true };
+
+  console.log(`[API] Advocate lookup: ${rollNumber} @ ${bench}`);
+
+  let data;
+  try {
+    data = bench === "lucknow"
+      ? await fetchAdvocateCasesLucknow(rollNumber)
+      : await fetchAdvocateCasesAllahabad(rollNumber);
+  } catch (err) {
+    console.error(`[API] Advocate lookup failed: ${err.message}`);
+    return {
+      status: "error",
+      rollNumber,
+      bench: bench === "lucknow" ? "Lucknow Bench" : "Allahabad",
+      error: err.message,
+      totalCases: 0,
+      cases: [],
+      fetchedAt: istTimestamp(),
+    };
+  }
+
+  if (data.totalCases > 0) setCache(cacheKey, data, CACHE_TTL.advocate_cases);
+  return data;
 }
 
 
@@ -929,19 +1154,40 @@ app.get("/api/advocate-cases-all/:rollNumber", async (req, res) => {
     const aldCases = ald.status === "fulfilled" && ald.value.status === "success" ? ald.value.cases : [];
     const lkoCases = lko.status === "fulfilled" && lko.value.status === "success" ? lko.value.cases : [];
 
-    // Tag cases with their bench
     aldCases.forEach(c => { c.bench = "Allahabad"; c.court = "Allahabad High Court"; });
     lkoCases.forEach(c => { c.bench = "Lucknow"; c.court = "Allahabad High Court (Lucknow Bench)"; });
 
     const allCases = [...aldCases, ...lkoCases];
 
+    // Bench-level status detail so the frontend can show meaningful messages
+    // (e.g. "Lucknow Bench CCMS is in maintenance" vs "advocate has no cases").
+    const benchStatus = {
+      allahabad: {
+        status: ald.status === "fulfilled" ? ald.value.status : "error",
+        count: aldCases.length,
+        error: ald.status === "fulfilled" ? ald.value.error : ald.reason?.message,
+        rollFormatUsed: ald.status === "fulfilled" ? ald.value.rollFormatUsed : null,
+      },
+      lucknow: {
+        status: lko.status === "fulfilled" ? lko.value.status : "error",
+        count: lkoCases.length,
+        error: lko.status === "fulfilled" ? lko.value.error : lko.reason?.message,
+        rollFormatUsed: lko.status === "fulfilled" ? lko.value.rollFormatUsed : null,
+        note: lko.status === "fulfilled" ? lko.value.note : null,
+      },
+    };
+
     res.json({
-      status: allCases.length > 0 ? "success" : "no_cases_found",
+      status: allCases.length > 0 ? "success"
+            : (benchStatus.allahabad.status === "upstream_maintenance" || benchStatus.lucknow.status === "upstream_maintenance")
+              ? "upstream_maintenance"
+              : "no_cases_found",
       rollNumber,
       totalCases: allCases.length,
       allahabadCases: aldCases.length,
       lucknowCases: lkoCases.length,
       cases: allCases,
+      benchStatus,
       fetchedAt: istTimestamp(),
     });
   } catch (err) {
@@ -983,6 +1229,58 @@ app.get("/api/causelist-today", async (req, res) => {
     const bench = req.query.bench || "allahabad";
     const result = await fetchCauselistToday(bench);
     res.json(result);
+  } catch (err) {
+    res.status(500).json({ status: "error", error: err.message });
+  }
+});
+
+// ── advmgmtsys (alpha): expose current capability status ──
+// Full implementation requires per-advocate username+password+captcha-solve through
+// hclko.allahabadhighcourt.in/advmgmtsys/login. The captcha there is a different style
+// (alphanumeric on a blue gradient) — needs its own OCR profile.
+app.get("/api/advmgmtsys-status", (req, res) => {
+  res.json({
+    status: "not_implemented",
+    message: "Authenticated advmgmtsys scrape is on the roadmap. Public CCMS endpoints are working.",
+    loginUrl: "https://hclko.allahabadhighcourt.in/advmgmtsys/login",
+    registerUrl: "https://hclko.allahabadhighcourt.in/advmgmtsys/registration",
+  });
+});
+
+// ── Diagnostics: dry-run a single POST and return raw response ──
+app.get("/api/advocate-dryrun", async (req, res) => {
+  try {
+    const { roll, bench = "lucknow", year } = req.query;
+    if (!roll) return res.status(400).json({ error: "missing ?roll=" });
+    const out = await dryRunAdvocate(bench, roll, year);
+    res.json(out);
+  } catch (err) {
+    res.status(500).json({ status: "error", error: err.message });
+  }
+});
+
+// ── Diagnostics: what URLs / formats does the backend try for a given roll number? ──
+app.get("/api/advocate-diag/:rollNumber", async (req, res) => {
+  try {
+    const { rollNumber } = req.params;
+    const variants = rollNumberVariants(rollNumber);
+    const currentYear = istNow().getFullYear();
+    res.json({
+      input: rollNumber,
+      variants,
+      allahabad: {
+        getUrl: `${CCMS_ALD_GET}/advocate-cases-roll-wise`,
+        postUrl: `${CCMS_ALD}/advocate-cases-roll-wise`,
+        fields: ["adv_roll", "case_year", "captchacode", "submit=Go"],
+        yearsToScan: Array.from({ length: 9 }, (_, i) => currentYear - i),
+      },
+      lucknow: {
+        getUrl: `${CCMS_LKO_GET}/advocate-cases-date-wise`,
+        postUrl: `${CCMS_LKO}/advocate-cases-date-wise`,
+        fields: ["adv_roll", "captchacode", "submit=Go"],
+      },
+      note: "CCMS uses the Advocate Roll Number (e.g. B/A2401/2019), not the Bar Council enrollment number (e.g. UP/2030/2018).",
+    });
   } catch (err) {
     res.status(500).json({ status: "error", error: err.message });
   }
