@@ -1,0 +1,1006 @@
+diff --git a/LegalDesk.html b/LegalDesk.html
+index 198ebc1..0ec813f 100644
+--- a/LegalDesk.html
++++ b/LegalDesk.html
+@@ -2080,7 +2080,7 @@ const AzureTranslator = {
+       { code: 'ta', name: 'Tamil', nativeName: 'தமிழ்' },
+       { code: 'te', name: 'Telugu', nativeName: 'తెలుగు' },
+       { code: 'mr', name: 'Marathi', nativeName: 'मराठी' },
+-      { code: 'gu', name: 'Gujarati', nativeName: 'ગુજરાતી' },
++      { code: 'gu', name: 'Gujarati', nativeName: 'ગુજરાতી' },
+       { code: 'kn', name: 'Kannada', nativeName: 'ಕನ್ನಡ' },
+       { code: 'ml', name: 'Malayalam', nativeName: 'മലയാളം' },
+       { code: 'pa', name: 'Punjabi', nativeName: 'ਪੰਜਾਬੀ' },
+@@ -2162,6 +2162,12 @@ const CourtAPI = {
+     return this._fetch('/api/court-calendar');
+   },
+ 
++  /** Fetch live Allahabad HC legal news (merged headlines + judgments RSS) */
++  async getNews(limit) {
++    const q = limit ? `?limit=${limit}` : '';
++    return this._fetch(`/api/news${q}`);
++  },
++
+   /** Convert raw API case data to the app's Matter format */
+   apiCaseToMatter(apiCase, index) {
+     const id = 'live_' + (apiCase.caseType || 'X') + '_' + (apiCase.caseNo || index) + '_' + (apiCase.year || '');
+@@ -2677,14 +2683,217 @@ const DEFAULT_INVOICES = [
+   { id: 'inv4', subject: 'Retainer Fee - May 2026', total: 50000, date: '2026-05-01', matterId: null },
+ ];
+ 
+-const LEGAL_NEWS = [
+-  { id: 'n1', title: 'Supreme Court upholds constitutional validity of new criminal laws', desc: 'The apex court dismissed a batch of petitions challenging BNS, BNSS and BSA.', time: '2 hours ago', url: 'https://main.sci.gov.in/supremecourt/judgements.htm' },
+-  { id: 'n2', title: 'Allahabad HC issues guidelines on bail applications in POCSO cases', desc: 'New guidelines mandate consideration of specific factors.', time: '5 hours ago', url: 'https://www.allahabadhighcourt.in/jo.htm' },
+-  { id: 'n3', title: 'E-filing mandatory for all High Courts from July 2026', desc: 'Supreme Court directed all High Courts to implement e-filing.', time: '1 day ago', url: 'https://www.allahabadhighcourt.in/efiling_21042021_landing.html' },
+-  { id: 'n4', title: 'Bar Council of India announces revised rules for advocate registration', desc: 'Updated rules for enrollment and renewal of advocate licenses.', time: '2 days ago', url: 'https://www.barcouncilofindia.org' },
+-  { id: 'n5', title: 'Lucknow Bench to start evening courts for commercial disputes', desc: 'Pilot program beginning June 2026 for expedited dispute resolution.', time: '3 days ago', url: 'https://www.allahabadhighcourt.in/calendar/itemWiseList.jsp?group=5' },
++// Fallback only — shown when the live RSS fetch is loading or has failed.
++// Real news comes from useLegalNews() → /api/news (Allahabad HC RSS feeds).
++const LEGAL_NEWS_FALLBACK = [
++  { id: 'n1', title: 'Loading latest legal updates from Allahabad High Court…', desc: 'Live RSS feeds (headlines + AFR/Landmark judgments) are being fetched. If this message persists, the backend may be offline.', time: 'just now', url: 'https://www.allahabadhighcourt.in/' },
+ ];
+ 
++// Format an ISO date as "x hours ago" / "x days ago" for the news card.
++function relativeTime(iso) {
++  if (!iso) return '';
++  const t = Date.parse(iso);
++  if (isNaN(t)) return '';
++  const diff = Date.now() - t;
++  const min = Math.floor(diff / 60000);
++  if (min < 1) return 'just now';
++  if (min < 60) return `${min} min ago`;
++  const hr = Math.floor(min / 60);
++  if (hr < 24) return `${hr} hour${hr === 1 ? '' : 's'} ago`;
++  const d = Math.floor(hr / 24);
++  if (d < 30) return `${d} day${d === 1 ? '' : 's'} ago`;
++  const mo = Math.floor(d / 30);
++  if (mo < 12) return `${mo} month${mo === 1 ? '' : 's'} ago`;
++  return new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
++}
++
++// Module-level cache so dashboard + Legal Updates page share one network call.
++let _legalNewsCache = null;
++let _legalNewsPromise = null;
++function fetchLegalNewsOnce() {
++  if (_legalNewsCache) return Promise.resolve(_legalNewsCache);
++  if (_legalNewsPromise) return _legalNewsPromise;
++  _legalNewsPromise = CourtAPI.getNews(40)
++    .then(res => {
++      if (res && res.status === 'success' && Array.isArray(res.items)) {
++        _legalNewsCache = res.items.map(it => ({
++          id: it.id,
++          title: it.title,
++          desc: it.description || '',
++          time: relativeTime(it.pubDate) || (it.pubDateRaw || ''),
++          url: it.link || '#',
++          source: it.source, // 'headlines' | 'judgments'
++        }));
++        return _legalNewsCache;
++      }
++      return LEGAL_NEWS_FALLBACK;
++    })
++    .catch(() => LEGAL_NEWS_FALLBACK)
++    .finally(() => { _legalNewsPromise = null; });
++  return _legalNewsPromise;
++}
++
++// React hook for components that render legal news.
++function useLegalNews() {
++  const [items, setItems] = useState(_legalNewsCache || LEGAL_NEWS_FALLBACK);
++  const [loading, setLoading] = useState(!_legalNewsCache);
++  useEffect(() => {
++    let alive = true;
++    fetchLegalNewsOnce().then(list => {
++      if (!alive) return;
++      setItems(list);
++      setLoading(false);
++    });
++    return () => { alive = false; };
++  }, []);
++  return { items, loading };
++}
++
++// Live Court View — replaces the unworkable iframe of courtview2.allahabadhighcourt.in.
++// The court page sends X-Frame-Options: SAMEORIGIN, so iframe embedding is blocked by every browser.
++// Instead we fetch /api/court-view (which scrapes the same page server-side) and render natively.
++function LiveCourtViewPanel({ bench, externalUrl, refreshSignal }) {
++  const [data, setData] = useState(null);
++  const [loading, setLoading] = useState(false);
++  const [error, setError] = useState(null);
++  const [refreshedAt, setRefreshedAt] = useState(null);
++
++  useEffect(() => {
++    let alive = true;
++    let timer = null;
++    const load = async (showSpinner) => {
++      if (showSpinner) setLoading(true);
++      try {
++        const res = await CourtAPI.getCourtView(bench);
++        if (!alive) return;
++        setData(res);
++        setError(null);
++        setRefreshedAt(new Date());
++      } catch (e) {
++        if (!alive) return;
++        setError(e.message || 'Failed to fetch court view');
++      } finally {
++        if (alive) setLoading(false);
++      }
++    };
++    load(true);
++    timer = setInterval(() => load(false), 30000); // backend caches for 30s
++    return () => { alive = false; if (timer) clearInterval(timer); };
++  }, [bench, refreshSignal]);
++
++  const courts = (data && data.courts) || [];
++  const inSession = courts.filter(c => c.status === 'in_session');
++  const notInSession = courts.filter(c => c.status !== 'in_session');
++
++  return (
++    <div style={{padding:'12px 16px'}}>
++      <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10, flexWrap:'wrap', gap:8}}>
++        <div style={{fontSize:12, color:'var(--text-muted)'}}>
++          {loading && !data && 'Loading live court view…'}
++          {data && (
++            <>
++              <strong style={{color:'var(--text-primary)'}}>{courts.length}</strong> courts ·
++              <strong style={{color:'var(--success)', marginLeft:6}}>{inSession.length}</strong> in session ·
++              <strong style={{color:'var(--text-muted)', marginLeft:6}}>{notInSession.length}</strong> idle
++              {refreshedAt && <span style={{marginLeft:10, fontFamily:'monospace', fontSize:11}}>· refreshed {refreshedAt.toLocaleTimeString('en-IN', { hour12: false })}</span>}
++            </>
++          )}
++        </div>
++        <div style={{display:'flex', gap:8}}>
++          <a href={externalUrl} target="_blank" rel="noopener" style={{fontSize:11, color:'var(--primary)', textDecoration:'none'}}>Open official page ↗</a>
++        </div>
++      </div>
++
++      {error && (
++        <div style={{padding:'10px 14px', borderRadius:'var(--radius)', background:'var(--danger-bg)', color:'var(--danger)', fontSize:13, marginBottom:10}}>
++          Couldn't reach the live court view backend: {error}
++        </div>
++      )}
++
++      {inSession.length > 0 && (
++        <div style={{overflowX:'auto', border:'1px solid var(--border)', borderRadius:'var(--radius)'}}>
++          <table style={{width:'100%', borderCollapse:'collapse', fontSize:12}}>
++            <thead>
++              <tr style={{background:'var(--bg-elevated)', textAlign:'left'}}>
++                <th style={{padding:'8px 10px', borderBottom:'1px solid var(--border)'}}>Court</th>
++                <th style={{padding:'8px 10px', borderBottom:'1px solid var(--border)'}}>Item</th>
++                <th style={{padding:'8px 10px', borderBottom:'1px solid var(--border)'}}>Case</th>
++                <th style={{padding:'8px 10px', borderBottom:'1px solid var(--border)'}}>Title</th>
++                <th style={{padding:'8px 10px', borderBottom:'1px solid var(--border)'}}>Petitioner's Counsel</th>
++                <th style={{padding:'8px 10px', borderBottom:'1px solid var(--border)'}}>Respondent's Counsel</th>
++                <th style={{padding:'8px 10px', borderBottom:'1px solid var(--border)'}}>Progress</th>
++              </tr>
++            </thead>
++            <tbody>
++              {inSession.map((c, i) => (
++                <tr key={i} style={{borderBottom:'1px solid var(--border-light)', background: i % 2 ? 'var(--bg-card)' : 'transparent'}}>
++                  <td style={{padding:'8px 10px', fontWeight:700, color:'var(--primary)'}}>{c.courtNo}</td>
++                  <td style={{padding:'8px 10px', fontFamily:'monospace'}}>{c.currentItem}</td>
++                  <td style={{padding:'8px 10px', fontFamily:'monospace', whiteSpace:'nowrap'}}>{c.caseRef || c.caseBeingHeard || '—'}</td>
++                  <td style={{padding:'8px 10px', maxWidth:280}}>{c.title || '—'}</td>
++                  <td style={{padding:'8px 10px', maxWidth:200, fontSize:11, color:'var(--text-secondary)'}}>{c.petitionerCounsel || '—'}</td>
++                  <td style={{padding:'8px 10px', maxWidth:200, fontSize:11, color:'var(--text-secondary)'}}>{c.respondentCounsel || '—'}</td>
++                  <td style={{padding:'8px 10px', fontSize:11}}>{c.progress || c.causelistType || ''}</td>
++                </tr>
++              ))}
++            </tbody>
++          </table>
++        </div>
++      )}
++
++      {data && inSession.length === 0 && (
++        <div style={{padding:'30px 20px', textAlign:'center', background:'var(--bg-card)', border:'1px dashed var(--border)', borderRadius:'var(--radius)'}}>
++          <div style={{fontSize:36, marginBottom:8, opacity:0.5}}>{Icons.monitor}</div>
++          <div style={{fontWeight:700, marginBottom:4}}>No courts in session right now</div>
++          <div style={{fontSize:12, color:'var(--text-muted)', maxWidth:420, margin:'0 auto'}}>
++            All {courts.length} court rooms show "not in session". This is normal outside hearing hours, on weekends, holidays, or during court vacations. Data refreshes every 30 seconds.
++          </div>
++        </div>
++      )}
++
++      {data && notInSession.length > 0 && (
++        <details style={{marginTop:12}}>
++          <summary style={{cursor:'pointer', fontSize:12, color:'var(--text-muted)'}}>Show {notInSession.length} idle court room{notInSession.length === 1 ? '' : 's'}</summary>
++          <div style={{display:'flex', flexWrap:'wrap', gap:6, marginTop:8}}>
++            {notInSession.map((c, i) => (
++              <span key={i} style={{padding:'3px 8px', fontSize:11, background:'var(--bg-elevated)', border:'1px solid var(--border)', borderRadius:'var(--radius-full)', color:'var(--text-muted)'}}>
++                {c.courtNo}
++              </span>
++            ))}
++          </div>
++        </details>
++      )}
++    </div>
++  );
++}
++
++// Compact Legal Updates card used on the dashboard.
++function LegalUpdatesCard({ navigate, limit = 4 }) {
++  const { items, loading } = useLegalNews();
++  return (
++    <div className="card">
++      <div className="card-header">
++        <span className="card-title">Legal Updates</span>
++        <button className="btn btn-sm btn-ghost" onClick={()=>navigate('legalupdates')}>View All</button>
++      </div>
++      <div className="card-body" style={{padding:'8px 20px'}}>
++        {loading && items === LEGAL_NEWS_FALLBACK && (
++          <div style={{fontSize:12, color:'var(--text-muted)', padding:8, textAlign:'center'}}>Loading live updates…</div>
++        )}
++        {items.slice(0, limit).map(n => (
++          <div key={n.id} className="news-card" style={{cursor: n.url && n.url !== '#' ? 'pointer' : 'default'}} onClick={() => { if (n.url && n.url !== '#') window.open(n.url, '_blank', 'noopener'); }}>
++            <div className="news-thumb">{Icons.newspaper}</div>
++            <div className="news-content">
++              <div className="news-title">{n.title}</div>
++              <div className="news-time">{n.time}{n.source ? ` · ${n.source === 'judgments' ? 'Judgment' : 'Headline'}` : ''}</div>
++            </div>
++          </div>
++        ))}
++      </div>
++    </div>
++  );
++}
++
+ const COURT_RESOURCES = {
+   judgments: {
+     title: 'Judgments & Orders',
+@@ -2983,7 +3192,7 @@ function LoginPage({ onLogin }) {
+         // Also check localStorage for a cached profile (current session or saved from previous logout)
+         const cachedUser = LS.get('user') || LS.get('profile_' + user.uid);
+         if ((profile && profile.verified) || (cachedUser && cachedUser.verified && cachedUser.uid === user.uid)) {
+-          // Returning user — skip verification
++          // Returning user — skip verification, go straight to dashboard
+           const mergedProfile = { ...(cachedUser || {}), ...(profile || {}) };
+           onLogin({
+             ...mergedProfile,
+@@ -3028,6 +3237,7 @@ function LoginPage({ onLogin }) {
+       if (user) {
+         setGoogleUser(user);
+         setForm(prev => ({ ...prev, name: user.name }));
++        // Check if returning user
+         let profile = null;
+         try {
+           const profilePromise = FirestoreService.getProfile(user.uid);
+@@ -3678,8 +3888,9 @@ function DashboardPage() {
+     },
+     causelists: {
+       label: 'Cause Lists', labelHi: 'वाद सूची', icon: Icons.fileText,
+-      urlAld: 'https://www.allahabadhighcourt.in/causelist/causelist_ald.htm',
+-      urlLko: 'https://www.allahabadhighcourt.in/causelist/causelist_lko.htm',
++      // The old /causelist/causelist_*.htm URLs returned 404. Live cause list now lives on the CCMS app.
++      urlAld: 'https://www.allahabadhighcourt.in/apps/status_ccms/index.php/causelist',
++      urlLko: 'https://hclko.allahabadhighcourt.in/status/index.php/cause-list',
+       desc: "Today's cause list — cases scheduled for hearing",
+     },
+     efiling: {
+@@ -3828,20 +4039,26 @@ function DashboardPage() {
+             <span>{currentPanel.desc} — {liveBench === 'lucknow' ? 'Lucknow Bench' : 'Allahabad (Principal Seat)'}</span>
+             <span style={{fontFamily:'monospace', fontSize:10, opacity:0.6}}>{currentUrl.replace('https://',''). split('/').slice(0,2).join('/')}</span>
+           </div>
+-          <div style={{padding:'24px 20px', textAlign:'center', minHeight:200, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:16, background:'var(--bg-card)'}}>
+-            <div style={{width:64, height:64, borderRadius:'50%', background:'var(--primary-bg)', display:'flex', alignItems:'center', justifyContent:'center', color:'var(--primary)'}}>{currentPanel.icon}</div>
+-            <div>
+-              <div style={{fontWeight:700, fontSize:16, marginBottom:4}}>{currentPanel.label}</div>
+-              <div style={{fontSize:13, color:'var(--text-secondary)', maxWidth:400, margin:'0 auto'}}>{currentPanel.desc}</div>
+-            </div>
+-            <div style={{display:'flex', gap:8, flexWrap:'wrap', justifyContent:'center'}}>
+-              <button className="btn btn-primary" onClick={() => window.open(currentUrl, '_blank')}>{Icons.externalLink} Open {currentPanel.label}</button>
+-              <button className="btn btn-outline" onClick={() => openCourtPopup(currentUrl, currentPanel.label)}>{Icons.monitor} Open in Popup Window</button>
+-            </div>
+-            <div style={{fontSize:11, color:'var(--text-muted)', marginTop:8, maxWidth:450}}>
+-              Court websites restrict embedding for security. Click the button above to open the live {currentPanel.label.toLowerCase()} directly from the Allahabad High Court website.
++          {livePanel === 'courtview' ? (
++            // Native live render — replaces the unworkable iframe.
++            // /api/court-view scrapes courtview2.allahabadhighcourt.in server-side and returns JSON.
++            <LiveCourtViewPanel bench={liveBench} externalUrl={currentUrl} refreshSignal={iframeKey} />
++          ) : (
++            <div style={{padding:'24px 20px', textAlign:'center', minHeight:200, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:16, background:'var(--bg-card)'}}>
++              <div style={{width:64, height:64, borderRadius:'50%', background:'var(--primary-bg)', display:'flex', alignItems:'center', justifyContent:'center', color:'var(--primary)'}}>{currentPanel.icon}</div>
++              <div>
++                <div style={{fontWeight:700, fontSize:16, marginBottom:4}}>{currentPanel.label}</div>
++                <div style={{fontSize:13, color:'var(--text-secondary)', maxWidth:400, margin:'0 auto'}}>{currentPanel.desc}</div>
++              </div>
++              <div style={{display:'flex', gap:8, flexWrap:'wrap', justifyContent:'center'}}>
++                <button className="btn btn-primary" onClick={() => window.open(currentUrl, '_blank')}>{Icons.externalLink} Open {currentPanel.label}</button>
++                <button className="btn btn-outline" onClick={() => openCourtPopup(currentUrl, currentPanel.label)}>{Icons.monitor} Open in Popup Window</button>
++              </div>
++              <div style={{fontSize:11, color:'var(--text-muted)', marginTop:8, maxWidth:450}}>
++                Court websites restrict embedding for security. Click the button above to open the live {currentPanel.label.toLowerCase()} directly from the Allahabad High Court website.
++              </div>
+             </div>
+-          </div>
++          )}
+         </div>
+       </div>
+ 
+@@ -3962,24 +4179,8 @@ function DashboardPage() {
+           </div>
+         </div>
+         <div>
+-          {/* Legal Updates */}
+-          <div className="card">
+-            <div className="card-header">
+-              <span className="card-title">Legal Updates</span>
+-              <button className="btn btn-sm btn-ghost" onClick={()=>navigate('legalupdates')}>View All</button>
+-            </div>
+-            <div className="card-body" style={{padding:'8px 20px'}}>
+-              {LEGAL_NEWS.slice(0,4).map(n => (
+-                <div key={n.id} className="news-card">
+-                  <div className="news-thumb">{Icons.newspaper}</div>
+-                  <div className="news-content">
+-                    <div className="news-title">{n.title}</div>
+-                    <div className="news-time">{n.time}</div>
+-                  </div>
+-                </div>
+-              ))}
+-            </div>
+-          </div>
++          {/* Legal Updates — live from Allahabad HC RSS feeds (was previously a hardcoded 5-item array) */}
++          <LegalUpdatesCard navigate={navigate} limit={4} />
+ 
+           {/* Quick Actions */}
+           <div className="card" style={{marginTop:16}}>
+@@ -5803,7 +6004,10 @@ function DisplayBoardPage() {
+                     {Icons.externalLink} Open Live Display Board
+                   </button>
+                   <button className="btn btn-outline" onClick={() => {
+-                    openCourtPopup('https://www.allahabadhighcourt.in/causelist/causelist_' + (liveBench==='lucknow'?'lko':'ald') + '.htm', 'CauseList');
++                    const causelistUrl = liveBench==='lucknow'
++                      ? 'https://hclko.allahabadhighcourt.in/status/index.php/cause-list'
++                      : 'https://www.allahabadhighcourt.in/apps/status_ccms/index.php/causelist';
++                    openCourtPopup(causelistUrl, 'CauseList');
+                     addToast('Cause List page opened', 'info');
+                   }}>
+                     {Icons.fileText} Today's Cause List
+@@ -6001,14 +6205,28 @@ function DisplayBoardPage() {
+ // LEGAL UPDATES PAGE
+ // ─────────────────────────────────────────────────────────────────────
+ function LegalUpdatesPage() {
++  const { items, loading } = useLegalNews();
++  const [filter, setFilter] = useState('all'); // all | headlines | judgments
++  const filtered = filter === 'all' ? items : items.filter(n => n.source === filter);
+   return (
+     <div className="content">
+-      <div className="page-header"><h2 className="page-title">Legal Updates</h2></div>
++      <div className="page-header">
++        <h2 className="page-title">Legal Updates</h2>
++        <div style={{display:'flex', gap:8}}>
++          <button className={`btn btn-sm ${filter==='all'?'btn-primary':'btn-outline'}`} onClick={()=>setFilter('all')}>All ({items.length})</button>
++          <button className={`btn btn-sm ${filter==='headlines'?'btn-primary':'btn-outline'}`} onClick={()=>setFilter('headlines')}>Headlines</button>
++          <button className={`btn btn-sm ${filter==='judgments'?'btn-primary':'btn-outline'}`} onClick={()=>setFilter('judgments')}>Judgments</button>
++        </div>
++      </div>
++      {loading && items === LEGAL_NEWS_FALLBACK && (
++        <div style={{padding:20, color:'var(--text-muted)'}}>Loading live updates from Allahabad HC RSS feeds…</div>
++      )}
+       <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(340px, 1fr))', gap:16}}>
+-        {LEGAL_NEWS.map(n => (
+-          <div key={n.id} className="card" style={{cursor:'pointer', transition:'var(--transition)'}} onClick={() => window.open(n.url, '_blank', 'noopener')}>
+-            <div style={{height:140, background:'var(--primary-bg)', display:'flex', alignItems:'center', justifyContent:'center', color:'var(--primary)'}}>
++        {filtered.map(n => (
++          <div key={n.id} className="card" style={{cursor: n.url && n.url !== '#' ? 'pointer' : 'default', transition:'var(--transition)'}} onClick={() => { if (n.url && n.url !== '#') window.open(n.url, '_blank', 'noopener'); }}>
++            <div style={{height:140, background:'var(--primary-bg)', display:'flex', alignItems:'center', justifyContent:'center', color:'var(--primary)', position:'relative'}}>
+               <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8M15 18h-5M10 6h8v4h-8V6Z"/></svg>
++              {n.source && <span style={{position:'absolute', top:8, right:8, background:'rgba(255,255,255,0.9)', color:'var(--primary)', fontSize:10, fontWeight:700, padding:'2px 8px', borderRadius:10, textTransform:'uppercase'}}>{n.source === 'judgments' ? 'Judgment' : 'Headline'}</span>}
+             </div>
+             <div className="card-body">
+               <div style={{fontWeight:700, fontSize:15, marginBottom:6, lineHeight:1.4}}>{n.title}</div>
+diff --git a/api-server/index.js b/api-server/index.js
+index fb65ac2..24a4583 100644
+--- a/api-server/index.js
++++ b/api-server/index.js
+@@ -39,6 +39,15 @@ const CCMS_LKO = `${BASE_URL}/apps/status_ccms_lko`;
+ const ELEGALIX = "https://elegalix.allahabadhighcourt.in/elegalix";
+ const COURT_VIEW_ALD = "https://courtview2.allahabadhighcourt.in/courtview/CourtViewAllahabad.do";
+ const COURT_VIEW_LKO = "https://courtview2.allahabadhighcourt.in/courtview/CourtViewLucknow.do";
++// Live cause list (CCMS — replaces the dead /causelist/causelist_*.htm URLs that returned 404)
++const CAUSELIST_CCMS_ALD = `${BASE_URL}/apps/status_ccms/index.php/causelist`;
++const CAUSELIST_CCMS_LKO = "https://hclko.allahabadhighcourt.in/status/index.php/cause-list";
++// Legacy PDF index (fallback only — still alive at 200, but mostly stale 2021 samples)
++const CAUSELIST_PDF_INDEX_ALD = `${BASE_URL}/causelist/indexA.html`;
++const CAUSELIST_PDF_INDEX_LKO = "https://hclko.allahabadhighcourt.in/causelist/indexL.html";
++// RSS feeds for Legal Updates
++const RSS_HEADLINES = `${BASE_URL}/calendar/rssHeadlines.jsp`;
++const RSS_JUDGMENTS = `${ELEGALIX}/rssfeed.do`;
+ const ECOURTS_BASE = "https://services.ecourts.gov.in/ecourtindia_v6";
+ const BCI_SEARCH = "https://www.barcouncilofindia.org/advocate-search";
+ 
+@@ -176,6 +185,7 @@ const CACHE_TTL = {
+   causelist: 30 * 60 * 1000,       // 30 min
+   court_view: 30 * 1000,           // 30 sec (live data)
+   calendar: 24 * 60 * 60 * 1000,   // 24 hr
++  news: 60 * 60 * 1000,            // 60 min (RSS feeds)
+ };
+ 
+ function getCached(key) {
+@@ -540,32 +550,100 @@ async function fetchCauselistToday(bench = "allahabad") {
+   const cached = getCached(cacheKey);
+   if (cached) return { ...cached, fromCache: true };
+ 
+-  const url = bench === "lucknow"
+-    ? `${BASE_URL}/causelist/causelist_lko.htm`
+-    : `${BASE_URL}/causelist/causelist_ald.htm`;
++  // PRIMARY: CCMS cause list (rich structured data).
++  // Previous URLs (/causelist/causelist_*.htm) returned 404 — the court moved this content to the CCMS app.
++  const ccmsUrl = bench === "lucknow" ? CAUSELIST_CCMS_LKO : CAUSELIST_CCMS_ALD;
++  const pdfIndexUrl = bench === "lucknow" ? CAUSELIST_PDF_INDEX_LKO : CAUSELIST_PDF_INDEX_ALD;
++  const pdfBase = bench === "lucknow"
++    ? "https://hclko.allahabadhighcourt.in/causelist/"
++    : `${BASE_URL}/causelist/`;
+ 
+-  const page = await fetchPage(url);
+-  const $ = cheerio.load(page.html);
++  const causelists = [];   // structured rows from CCMS
++  const pdfs = [];         // consolidated/supplementary PDF links
+ 
+-  const causelists = [];
+-  $("a").each((i, a) => {
+-    const href = $(a).attr("href");
+-    const text = $(a).text().trim();
+-    if (href && text && (href.includes(".pdf") || href.includes("causelist"))) {
+-      causelists.push({
+-        title: text,
+-        url: href.startsWith("http") ? href : `${BASE_URL}/causelist/${href}`,
+-        date: istDateStr(),
++  // ── Try CCMS first ──
++  try {
++    const page = await fetchPage(ccmsUrl);
++    if (page.status === 200 && page.html) {
++      const $ = cheerio.load(page.html);
++      // CCMS renders an HTML table; column order varies slightly between ALD and LKO,
++      // so detect columns by header name rather than position.
++      $("table").each((_, table) => {
++        const rows = parseTable($, table);
++        if (rows.length < 2) return;
++        const header = rows[0].map(h => h.toLowerCase());
++        const idx = {
++          court: header.findIndex(h => /court\s*no/.test(h)),
++          serial: header.findIndex(h => /sr\.?\s*no|serial/.test(h)),
++          caseRef: header.findIndex(h => /case|cnr/.test(h)),
++          parties: header.findIndex(h => /part(y|ies)|title/.test(h)),
++          listType: header.findIndex(h => /list|type/.test(h)),
++          judge: header.findIndex(h => /coram|judge|bench/.test(h)),
++        };
++        rows.slice(1).forEach(row => {
++          if (row.length < 2) return;
++          const entry = {
++            courtNo: idx.court >= 0 ? row[idx.court] : null,
++            serial: idx.serial >= 0 ? row[idx.serial] : null,
++            caseRef: idx.caseRef >= 0 ? row[idx.caseRef] : row[0],
++            parties: idx.parties >= 0 ? row[idx.parties] : (row[2] || null),
++            listType: idx.listType >= 0 ? row[idx.listType] : null,
++            coram: idx.judge >= 0 ? row[idx.judge] : null,
++          };
++          if (entry.caseRef && entry.caseRef.length > 1) causelists.push(entry);
++        });
++      });
++
++      // Pick up any PDF causelist links present on the CCMS page
++      $("a").each((_, a) => {
++        const href = $(a).attr("href");
++        const text = $(a).text().trim();
++        if (href && /\.pdf$/i.test(href)) {
++          pdfs.push({
++            title: text || href.split("/").pop(),
++            url: href.startsWith("http") ? href : (href.startsWith("/") ? `${BASE_URL}${href}` : pdfBase + href),
++          });
++        }
+       });
+     }
+-  });
++  } catch (err) {
++    console.warn(`[API] CCMS cause list fetch failed (${bench}):`, err.message);
++  }
++
++  // ── Fallback to legacy PDF index for consolidated / supplementary PDFs ──
++  try {
++    const idx = await fetchPage(pdfIndexUrl);
++    if (idx.status === 200 && idx.html) {
++      const $ = cheerio.load(idx.html);
++      $("a").each((_, a) => {
++        const href = $(a).attr("href");
++        const text = $(a).text().trim();
++        if (!href) return;
++        const isPdf = /\.pdf$/i.test(href);
++        const isCauselistLink = /causelist|cause-list/i.test(href);
++        if ((isPdf || isCauselistLink) && text) {
++          const fullUrl = href.startsWith("http") ? href : (href.startsWith("/") ? `${BASE_URL}${href}` : pdfBase + href);
++          if (!pdfs.some(p => p.url === fullUrl)) {
++            pdfs.push({ title: text, url: fullUrl });
++          }
++        }
++      });
++    }
++  } catch (err) {
++    console.warn(`[API] PDF index fallback failed (${bench}):`, err.message);
++  }
+ 
+   const data = {
+     status: "success",
+     bench: bench === "lucknow" ? "Lucknow" : "Allahabad",
+     date: istDateStr(),
++    source: "ccms+pdf-index",
++    sourceUrls: { ccms: ccmsUrl, pdfIndex: pdfIndexUrl },
+     causelists,
+-    totalLists: causelists.length,
++    pdfs,
++    totalLists: causelists.length + pdfs.length,
++    totalEntries: causelists.length,
++    totalPdfs: pdfs.length,
+     fetchedAt: istTimestamp(),
+   };
+   setCache(cacheKey, data, CACHE_TTL.causelist);
+@@ -573,6 +651,82 @@ async function fetchCauselistToday(bench = "allahabad") {
+ }
+ 
+ 
++// ─────────────────────────────────────────────────────────────────────
++// LEGAL NEWS (Allahabad HC RSS feeds: headlines + judgments)
++// ─────────────────────────────────────────────────────────────────────
++
++function parseRssItems(xmlString, source) {
++  const $ = cheerio.load(xmlString, { xmlMode: true });
++  const items = [];
++  $("item").each((_, el) => {
++    const $el = $(el);
++    const description = $el.find("description").text().trim();
++    // Strip basic HTML from RSS descriptions for clean rendering
++    const cleanDesc = description.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 400);
++    const link = $el.find("link").text().trim() || $el.find("guid").text().trim();
++    const pubDateRaw = $el.find("pubDate").text().trim() || $el.find("dc\\:date, date").text().trim();
++    let pubDate = null;
++    if (pubDateRaw) {
++      const d = new Date(pubDateRaw);
++      if (!isNaN(d.getTime())) pubDate = d.toISOString();
++    }
++    items.push({
++      id: `${source}_${Buffer.from(link || $el.find("title").text()).toString("base64").slice(0, 16)}`,
++      title: $el.find("title").text().trim(),
++      link,
++      description: cleanDesc,
++      source,           // "headlines" or "judgments"
++      pubDate,
++      pubDateRaw,
++    });
++  });
++  return items;
++}
++
++async function fetchLegalNews() {
++  const cacheKey = "news_all";
++  const cached = getCached(cacheKey);
++  if (cached) return { ...cached, fromCache: true };
++
++  const [headlinesRes, judgmentsRes] = await Promise.allSettled([
++    fetchPage(RSS_HEADLINES),
++    fetchPage(RSS_JUDGMENTS),
++  ]);
++
++  let headlines = [];
++  let judgments = [];
++
++  if (headlinesRes.status === "fulfilled" && headlinesRes.value.status === 200) {
++    try { headlines = parseRssItems(headlinesRes.value.html, "headlines"); }
++    catch (err) { console.warn("[API] Headlines RSS parse failed:", err.message); }
++  }
++  if (judgmentsRes.status === "fulfilled" && judgmentsRes.value.status === 200) {
++    try { judgments = parseRssItems(judgmentsRes.value.html, "judgments"); }
++    catch (err) { console.warn("[API] Judgments RSS parse failed:", err.message); }
++  }
++
++  // Merge + sort newest first
++  const all = [...headlines, ...judgments].sort((a, b) => {
++    const da = a.pubDate ? Date.parse(a.pubDate) : 0;
++    const db = b.pubDate ? Date.parse(b.pubDate) : 0;
++    return db - da;
++  });
++
++  const data = {
++    status: "success",
++    sources: {
++      headlines: { url: RSS_HEADLINES, count: headlines.length },
++      judgments: { url: RSS_JUDGMENTS, count: judgments.length },
++    },
++    totalItems: all.length,
++    items: all,
++    fetchedAt: istTimestamp(),
++  };
++  setCache(cacheKey, data, CACHE_TTL.news);
++  return data;
++}
++
++
+ // ─────────────────────────────────────────────────────────────────────
+ // COURT VIEW (live display board — for real-time ETA)
+ // ─────────────────────────────────────────────────────────────────────
+@@ -834,6 +988,21 @@ app.get("/api/causelist-today", async (req, res) => {
+   }
+ });
+ 
++// ── Legal updates / news (merged Allahabad HC RSS feeds) ──
++app.get("/api/news", async (req, res) => {
++  try {
++    const result = await fetchLegalNews();
++    const limit = parseInt(req.query.limit, 10);
++    if (Number.isFinite(limit) && limit > 0) {
++      res.json({ ...result, items: result.items.slice(0, limit) });
++    } else {
++      res.json(result);
++    }
++  } catch (err) {
++    res.status(500).json({ status: "error", error: err.message });
++  }
++});
++
+ // ── Live court view (for real-time ETA) ──
+ app.get("/api/court-view", async (req, res) => {
+   try {
+diff --git a/index.html b/index.html
+index d6ca6d9..0ec813f 100644
+--- a/index.html
++++ b/index.html
+@@ -2162,6 +2162,12 @@ const CourtAPI = {
+     return this._fetch('/api/court-calendar');
+   },
+ 
++  /** Fetch live Allahabad HC legal news (merged headlines + judgments RSS) */
++  async getNews(limit) {
++    const q = limit ? `?limit=${limit}` : '';
++    return this._fetch(`/api/news${q}`);
++  },
++
+   /** Convert raw API case data to the app's Matter format */
+   apiCaseToMatter(apiCase, index) {
+     const id = 'live_' + (apiCase.caseType || 'X') + '_' + (apiCase.caseNo || index) + '_' + (apiCase.year || '');
+@@ -2677,14 +2683,217 @@ const DEFAULT_INVOICES = [
+   { id: 'inv4', subject: 'Retainer Fee - May 2026', total: 50000, date: '2026-05-01', matterId: null },
+ ];
+ 
+-const LEGAL_NEWS = [
+-  { id: 'n1', title: 'Supreme Court upholds constitutional validity of new criminal laws', desc: 'The apex court dismissed a batch of petitions challenging BNS, BNSS and BSA.', time: '2 hours ago', url: 'https://main.sci.gov.in/supremecourt/judgements.htm' },
+-  { id: 'n2', title: 'Allahabad HC issues guidelines on bail applications in POCSO cases', desc: 'New guidelines mandate consideration of specific factors.', time: '5 hours ago', url: 'https://www.allahabadhighcourt.in/jo.htm' },
+-  { id: 'n3', title: 'E-filing mandatory for all High Courts from July 2026', desc: 'Supreme Court directed all High Courts to implement e-filing.', time: '1 day ago', url: 'https://www.allahabadhighcourt.in/efiling_21042021_landing.html' },
+-  { id: 'n4', title: 'Bar Council of India announces revised rules for advocate registration', desc: 'Updated rules for enrollment and renewal of advocate licenses.', time: '2 days ago', url: 'https://www.barcouncilofindia.org' },
+-  { id: 'n5', title: 'Lucknow Bench to start evening courts for commercial disputes', desc: 'Pilot program beginning June 2026 for expedited dispute resolution.', time: '3 days ago', url: 'https://www.allahabadhighcourt.in/calendar/itemWiseList.jsp?group=5' },
++// Fallback only — shown when the live RSS fetch is loading or has failed.
++// Real news comes from useLegalNews() → /api/news (Allahabad HC RSS feeds).
++const LEGAL_NEWS_FALLBACK = [
++  { id: 'n1', title: 'Loading latest legal updates from Allahabad High Court…', desc: 'Live RSS feeds (headlines + AFR/Landmark judgments) are being fetched. If this message persists, the backend may be offline.', time: 'just now', url: 'https://www.allahabadhighcourt.in/' },
+ ];
+ 
++// Format an ISO date as "x hours ago" / "x days ago" for the news card.
++function relativeTime(iso) {
++  if (!iso) return '';
++  const t = Date.parse(iso);
++  if (isNaN(t)) return '';
++  const diff = Date.now() - t;
++  const min = Math.floor(diff / 60000);
++  if (min < 1) return 'just now';
++  if (min < 60) return `${min} min ago`;
++  const hr = Math.floor(min / 60);
++  if (hr < 24) return `${hr} hour${hr === 1 ? '' : 's'} ago`;
++  const d = Math.floor(hr / 24);
++  if (d < 30) return `${d} day${d === 1 ? '' : 's'} ago`;
++  const mo = Math.floor(d / 30);
++  if (mo < 12) return `${mo} month${mo === 1 ? '' : 's'} ago`;
++  return new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
++}
++
++// Module-level cache so dashboard + Legal Updates page share one network call.
++let _legalNewsCache = null;
++let _legalNewsPromise = null;
++function fetchLegalNewsOnce() {
++  if (_legalNewsCache) return Promise.resolve(_legalNewsCache);
++  if (_legalNewsPromise) return _legalNewsPromise;
++  _legalNewsPromise = CourtAPI.getNews(40)
++    .then(res => {
++      if (res && res.status === 'success' && Array.isArray(res.items)) {
++        _legalNewsCache = res.items.map(it => ({
++          id: it.id,
++          title: it.title,
++          desc: it.description || '',
++          time: relativeTime(it.pubDate) || (it.pubDateRaw || ''),
++          url: it.link || '#',
++          source: it.source, // 'headlines' | 'judgments'
++        }));
++        return _legalNewsCache;
++      }
++      return LEGAL_NEWS_FALLBACK;
++    })
++    .catch(() => LEGAL_NEWS_FALLBACK)
++    .finally(() => { _legalNewsPromise = null; });
++  return _legalNewsPromise;
++}
++
++// React hook for components that render legal news.
++function useLegalNews() {
++  const [items, setItems] = useState(_legalNewsCache || LEGAL_NEWS_FALLBACK);
++  const [loading, setLoading] = useState(!_legalNewsCache);
++  useEffect(() => {
++    let alive = true;
++    fetchLegalNewsOnce().then(list => {
++      if (!alive) return;
++      setItems(list);
++      setLoading(false);
++    });
++    return () => { alive = false; };
++  }, []);
++  return { items, loading };
++}
++
++// Live Court View — replaces the unworkable iframe of courtview2.allahabadhighcourt.in.
++// The court page sends X-Frame-Options: SAMEORIGIN, so iframe embedding is blocked by every browser.
++// Instead we fetch /api/court-view (which scrapes the same page server-side) and render natively.
++function LiveCourtViewPanel({ bench, externalUrl, refreshSignal }) {
++  const [data, setData] = useState(null);
++  const [loading, setLoading] = useState(false);
++  const [error, setError] = useState(null);
++  const [refreshedAt, setRefreshedAt] = useState(null);
++
++  useEffect(() => {
++    let alive = true;
++    let timer = null;
++    const load = async (showSpinner) => {
++      if (showSpinner) setLoading(true);
++      try {
++        const res = await CourtAPI.getCourtView(bench);
++        if (!alive) return;
++        setData(res);
++        setError(null);
++        setRefreshedAt(new Date());
++      } catch (e) {
++        if (!alive) return;
++        setError(e.message || 'Failed to fetch court view');
++      } finally {
++        if (alive) setLoading(false);
++      }
++    };
++    load(true);
++    timer = setInterval(() => load(false), 30000); // backend caches for 30s
++    return () => { alive = false; if (timer) clearInterval(timer); };
++  }, [bench, refreshSignal]);
++
++  const courts = (data && data.courts) || [];
++  const inSession = courts.filter(c => c.status === 'in_session');
++  const notInSession = courts.filter(c => c.status !== 'in_session');
++
++  return (
++    <div style={{padding:'12px 16px'}}>
++      <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10, flexWrap:'wrap', gap:8}}>
++        <div style={{fontSize:12, color:'var(--text-muted)'}}>
++          {loading && !data && 'Loading live court view…'}
++          {data && (
++            <>
++              <strong style={{color:'var(--text-primary)'}}>{courts.length}</strong> courts ·
++              <strong style={{color:'var(--success)', marginLeft:6}}>{inSession.length}</strong> in session ·
++              <strong style={{color:'var(--text-muted)', marginLeft:6}}>{notInSession.length}</strong> idle
++              {refreshedAt && <span style={{marginLeft:10, fontFamily:'monospace', fontSize:11}}>· refreshed {refreshedAt.toLocaleTimeString('en-IN', { hour12: false })}</span>}
++            </>
++          )}
++        </div>
++        <div style={{display:'flex', gap:8}}>
++          <a href={externalUrl} target="_blank" rel="noopener" style={{fontSize:11, color:'var(--primary)', textDecoration:'none'}}>Open official page ↗</a>
++        </div>
++      </div>
++
++      {error && (
++        <div style={{padding:'10px 14px', borderRadius:'var(--radius)', background:'var(--danger-bg)', color:'var(--danger)', fontSize:13, marginBottom:10}}>
++          Couldn't reach the live court view backend: {error}
++        </div>
++      )}
++
++      {inSession.length > 0 && (
++        <div style={{overflowX:'auto', border:'1px solid var(--border)', borderRadius:'var(--radius)'}}>
++          <table style={{width:'100%', borderCollapse:'collapse', fontSize:12}}>
++            <thead>
++              <tr style={{background:'var(--bg-elevated)', textAlign:'left'}}>
++                <th style={{padding:'8px 10px', borderBottom:'1px solid var(--border)'}}>Court</th>
++                <th style={{padding:'8px 10px', borderBottom:'1px solid var(--border)'}}>Item</th>
++                <th style={{padding:'8px 10px', borderBottom:'1px solid var(--border)'}}>Case</th>
++                <th style={{padding:'8px 10px', borderBottom:'1px solid var(--border)'}}>Title</th>
++                <th style={{padding:'8px 10px', borderBottom:'1px solid var(--border)'}}>Petitioner's Counsel</th>
++                <th style={{padding:'8px 10px', borderBottom:'1px solid var(--border)'}}>Respondent's Counsel</th>
++                <th style={{padding:'8px 10px', borderBottom:'1px solid var(--border)'}}>Progress</th>
++              </tr>
++            </thead>
++            <tbody>
++              {inSession.map((c, i) => (
++                <tr key={i} style={{borderBottom:'1px solid var(--border-light)', background: i % 2 ? 'var(--bg-card)' : 'transparent'}}>
++                  <td style={{padding:'8px 10px', fontWeight:700, color:'var(--primary)'}}>{c.courtNo}</td>
++                  <td style={{padding:'8px 10px', fontFamily:'monospace'}}>{c.currentItem}</td>
++                  <td style={{padding:'8px 10px', fontFamily:'monospace', whiteSpace:'nowrap'}}>{c.caseRef || c.caseBeingHeard || '—'}</td>
++                  <td style={{padding:'8px 10px', maxWidth:280}}>{c.title || '—'}</td>
++                  <td style={{padding:'8px 10px', maxWidth:200, fontSize:11, color:'var(--text-secondary)'}}>{c.petitionerCounsel || '—'}</td>
++                  <td style={{padding:'8px 10px', maxWidth:200, fontSize:11, color:'var(--text-secondary)'}}>{c.respondentCounsel || '—'}</td>
++                  <td style={{padding:'8px 10px', fontSize:11}}>{c.progress || c.causelistType || ''}</td>
++                </tr>
++              ))}
++            </tbody>
++          </table>
++        </div>
++      )}
++
++      {data && inSession.length === 0 && (
++        <div style={{padding:'30px 20px', textAlign:'center', background:'var(--bg-card)', border:'1px dashed var(--border)', borderRadius:'var(--radius)'}}>
++          <div style={{fontSize:36, marginBottom:8, opacity:0.5}}>{Icons.monitor}</div>
++          <div style={{fontWeight:700, marginBottom:4}}>No courts in session right now</div>
++          <div style={{fontSize:12, color:'var(--text-muted)', maxWidth:420, margin:'0 auto'}}>
++            All {courts.length} court rooms show "not in session". This is normal outside hearing hours, on weekends, holidays, or during court vacations. Data refreshes every 30 seconds.
++          </div>
++        </div>
++      )}
++
++      {data && notInSession.length > 0 && (
++        <details style={{marginTop:12}}>
++          <summary style={{cursor:'pointer', fontSize:12, color:'var(--text-muted)'}}>Show {notInSession.length} idle court room{notInSession.length === 1 ? '' : 's'}</summary>
++          <div style={{display:'flex', flexWrap:'wrap', gap:6, marginTop:8}}>
++            {notInSession.map((c, i) => (
++              <span key={i} style={{padding:'3px 8px', fontSize:11, background:'var(--bg-elevated)', border:'1px solid var(--border)', borderRadius:'var(--radius-full)', color:'var(--text-muted)'}}>
++                {c.courtNo}
++              </span>
++            ))}
++          </div>
++        </details>
++      )}
++    </div>
++  );
++}
++
++// Compact Legal Updates card used on the dashboard.
++function LegalUpdatesCard({ navigate, limit = 4 }) {
++  const { items, loading } = useLegalNews();
++  return (
++    <div className="card">
++      <div className="card-header">
++        <span className="card-title">Legal Updates</span>
++        <button className="btn btn-sm btn-ghost" onClick={()=>navigate('legalupdates')}>View All</button>
++      </div>
++      <div className="card-body" style={{padding:'8px 20px'}}>
++        {loading && items === LEGAL_NEWS_FALLBACK && (
++          <div style={{fontSize:12, color:'var(--text-muted)', padding:8, textAlign:'center'}}>Loading live updates…</div>
++        )}
++        {items.slice(0, limit).map(n => (
++          <div key={n.id} className="news-card" style={{cursor: n.url && n.url !== '#' ? 'pointer' : 'default'}} onClick={() => { if (n.url && n.url !== '#') window.open(n.url, '_blank', 'noopener'); }}>
++            <div className="news-thumb">{Icons.newspaper}</div>
++            <div className="news-content">
++              <div className="news-title">{n.title}</div>
++              <div className="news-time">{n.time}{n.source ? ` · ${n.source === 'judgments' ? 'Judgment' : 'Headline'}` : ''}</div>
++            </div>
++          </div>
++        ))}
++      </div>
++    </div>
++  );
++}
++
+ const COURT_RESOURCES = {
+   judgments: {
+     title: 'Judgments & Orders',
+@@ -3679,8 +3888,9 @@ function DashboardPage() {
+     },
+     causelists: {
+       label: 'Cause Lists', labelHi: 'वाद सूची', icon: Icons.fileText,
+-      urlAld: 'https://www.allahabadhighcourt.in/causelist/causelist_ald.htm',
+-      urlLko: 'https://www.allahabadhighcourt.in/causelist/causelist_lko.htm',
++      // The old /causelist/causelist_*.htm URLs returned 404. Live cause list now lives on the CCMS app.
++      urlAld: 'https://www.allahabadhighcourt.in/apps/status_ccms/index.php/causelist',
++      urlLko: 'https://hclko.allahabadhighcourt.in/status/index.php/cause-list',
+       desc: "Today's cause list — cases scheduled for hearing",
+     },
+     efiling: {
+@@ -3829,20 +4039,26 @@ function DashboardPage() {
+             <span>{currentPanel.desc} — {liveBench === 'lucknow' ? 'Lucknow Bench' : 'Allahabad (Principal Seat)'}</span>
+             <span style={{fontFamily:'monospace', fontSize:10, opacity:0.6}}>{currentUrl.replace('https://',''). split('/').slice(0,2).join('/')}</span>
+           </div>
+-          <div style={{padding:'24px 20px', textAlign:'center', minHeight:200, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:16, background:'var(--bg-card)'}}>
+-            <div style={{width:64, height:64, borderRadius:'50%', background:'var(--primary-bg)', display:'flex', alignItems:'center', justifyContent:'center', color:'var(--primary)'}}>{currentPanel.icon}</div>
+-            <div>
+-              <div style={{fontWeight:700, fontSize:16, marginBottom:4}}>{currentPanel.label}</div>
+-              <div style={{fontSize:13, color:'var(--text-secondary)', maxWidth:400, margin:'0 auto'}}>{currentPanel.desc}</div>
+-            </div>
+-            <div style={{display:'flex', gap:8, flexWrap:'wrap', justifyContent:'center'}}>
+-              <button className="btn btn-primary" onClick={() => window.open(currentUrl, '_blank')}>{Icons.externalLink} Open {currentPanel.label}</button>
+-              <button className="btn btn-outline" onClick={() => openCourtPopup(currentUrl, currentPanel.label)}>{Icons.monitor} Open in Popup Window</button>
+-            </div>
+-            <div style={{fontSize:11, color:'var(--text-muted)', marginTop:8, maxWidth:450}}>
+-              Court websites restrict embedding for security. Click the button above to open the live {currentPanel.label.toLowerCase()} directly from the Allahabad High Court website.
++          {livePanel === 'courtview' ? (
++            // Native live render — replaces the unworkable iframe.
++            // /api/court-view scrapes courtview2.allahabadhighcourt.in server-side and returns JSON.
++            <LiveCourtViewPanel bench={liveBench} externalUrl={currentUrl} refreshSignal={iframeKey} />
++          ) : (
++            <div style={{padding:'24px 20px', textAlign:'center', minHeight:200, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:16, background:'var(--bg-card)'}}>
++              <div style={{width:64, height:64, borderRadius:'50%', background:'var(--primary-bg)', display:'flex', alignItems:'center', justifyContent:'center', color:'var(--primary)'}}>{currentPanel.icon}</div>
++              <div>
++                <div style={{fontWeight:700, fontSize:16, marginBottom:4}}>{currentPanel.label}</div>
++                <div style={{fontSize:13, color:'var(--text-secondary)', maxWidth:400, margin:'0 auto'}}>{currentPanel.desc}</div>
++              </div>
++              <div style={{display:'flex', gap:8, flexWrap:'wrap', justifyContent:'center'}}>
++                <button className="btn btn-primary" onClick={() => window.open(currentUrl, '_blank')}>{Icons.externalLink} Open {currentPanel.label}</button>
++                <button className="btn btn-outline" onClick={() => openCourtPopup(currentUrl, currentPanel.label)}>{Icons.monitor} Open in Popup Window</button>
++              </div>
++              <div style={{fontSize:11, color:'var(--text-muted)', marginTop:8, maxWidth:450}}>
++                Court websites restrict embedding for security. Click the button above to open the live {currentPanel.label.toLowerCase()} directly from the Allahabad High Court website.
++              </div>
+             </div>
+-          </div>
++          )}
+         </div>
+       </div>
+ 
+@@ -3963,24 +4179,8 @@ function DashboardPage() {
+           </div>
+         </div>
+         <div>
+-          {/* Legal Updates */}
+-          <div className="card">
+-            <div className="card-header">
+-              <span className="card-title">Legal Updates</span>
+-              <button className="btn btn-sm btn-ghost" onClick={()=>navigate('legalupdates')}>View All</button>
+-            </div>
+-            <div className="card-body" style={{padding:'8px 20px'}}>
+-              {LEGAL_NEWS.slice(0,4).map(n => (
+-                <div key={n.id} className="news-card">
+-                  <div className="news-thumb">{Icons.newspaper}</div>
+-                  <div className="news-content">
+-                    <div className="news-title">{n.title}</div>
+-                    <div className="news-time">{n.time}</div>
+-                  </div>
+-                </div>
+-              ))}
+-            </div>
+-          </div>
++          {/* Legal Updates — live from Allahabad HC RSS feeds (was previously a hardcoded 5-item array) */}
++          <LegalUpdatesCard navigate={navigate} limit={4} />
+ 
+           {/* Quick Actions */}
+           <div className="card" style={{marginTop:16}}>
+@@ -5804,7 +6004,10 @@ function DisplayBoardPage() {
+                     {Icons.externalLink} Open Live Display Board
+                   </button>
+                   <button className="btn btn-outline" onClick={() => {
+-                    openCourtPopup('https://www.allahabadhighcourt.in/causelist/causelist_' + (liveBench==='lucknow'?'lko':'ald') + '.htm', 'CauseList');
++                    const causelistUrl = liveBench==='lucknow'
++                      ? 'https://hclko.allahabadhighcourt.in/status/index.php/cause-list'
++                      : 'https://www.allahabadhighcourt.in/apps/status_ccms/index.php/causelist';
++                    openCourtPopup(causelistUrl, 'CauseList');
+                     addToast('Cause List page opened', 'info');
+                   }}>
+                     {Icons.fileText} Today's Cause List
+@@ -6002,14 +6205,28 @@ function DisplayBoardPage() {
+ // LEGAL UPDATES PAGE
+ // ─────────────────────────────────────────────────────────────────────
+ function LegalUpdatesPage() {
++  const { items, loading } = useLegalNews();
++  const [filter, setFilter] = useState('all'); // all | headlines | judgments
++  const filtered = filter === 'all' ? items : items.filter(n => n.source === filter);
+   return (
+     <div className="content">
+-      <div className="page-header"><h2 className="page-title">Legal Updates</h2></div>
++      <div className="page-header">
++        <h2 className="page-title">Legal Updates</h2>
++        <div style={{display:'flex', gap:8}}>
++          <button className={`btn btn-sm ${filter==='all'?'btn-primary':'btn-outline'}`} onClick={()=>setFilter('all')}>All ({items.length})</button>
++          <button className={`btn btn-sm ${filter==='headlines'?'btn-primary':'btn-outline'}`} onClick={()=>setFilter('headlines')}>Headlines</button>
++          <button className={`btn btn-sm ${filter==='judgments'?'btn-primary':'btn-outline'}`} onClick={()=>setFilter('judgments')}>Judgments</button>
++        </div>
++      </div>
++      {loading && items === LEGAL_NEWS_FALLBACK && (
++        <div style={{padding:20, color:'var(--text-muted)'}}>Loading live updates from Allahabad HC RSS feeds…</div>
++      )}
+       <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(340px, 1fr))', gap:16}}>
+-        {LEGAL_NEWS.map(n => (
+-          <div key={n.id} className="card" style={{cursor:'pointer', transition:'var(--transition)'}} onClick={() => window.open(n.url, '_blank', 'noopener')}>
+-            <div style={{height:140, background:'var(--primary-bg)', display:'flex', alignItems:'center', justifyContent:'center', color:'var(--primary)'}}>
++        {filtered.map(n => (
++          <div key={n.id} className="card" style={{cursor: n.url && n.url !== '#' ? 'pointer' : 'default', transition:'var(--transition)'}} onClick={() => { if (n.url && n.url !== '#') window.open(n.url, '_blank', 'noopener'); }}>
++            <div style={{height:140, background:'var(--primary-bg)', display:'flex', alignItems:'center', justifyContent:'center', color:'var(--primary)', position:'relative'}}>
+               <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8M15 18h-5M10 6h8v4h-8V6Z"/></svg>
++              {n.source && <span style={{position:'absolute', top:8, right:8, background:'rgba(255,255,255,0.9)', color:'var(--primary)', fontSize:10, fontWeight:700, padding:'2px 8px', borderRadius:10, textTransform:'uppercase'}}>{n.source === 'judgments' ? 'Judgment' : 'Headline'}</span>}
+             </div>
+             <div className="card-body">
+               <div style={{fontWeight:700, fontSize:15, marginBottom:6, lineHeight:1.4}}>{n.title}</div>
