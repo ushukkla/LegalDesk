@@ -2229,16 +2229,19 @@ class ErrorBoundary extends React.Component {
 function fmtDate(d) {
   if (!d) return '—';
   const dt = new Date(d);
-  return dt.toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' });
+  return dt.toLocaleDateString('en-IN', { timeZone:'Asia/Kolkata', day:'2-digit', month:'short', year:'numeric' });
 }
 function fmtDateLong(d) {
   if (!d) return '—';
   const dt = new Date(d);
-  return dt.toLocaleDateString('en-IN', { day:'2-digit', month:'long', year:'numeric' });
+  return dt.toLocaleDateString('en-IN', { timeZone:'Asia/Kolkata', day:'2-digit', month:'long', year:'numeric' });
 }
 function toYMD(d) {
-  const dt = new Date(d);
-  return dt.toISOString().split('T')[0];
+  const dt = d ? new Date(d) : new Date();
+  // Always use IST (Indian Standard Time) for date calculations
+  const opts = { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' };
+  const parts = dt.toLocaleDateString('en-CA', opts); // en-CA gives YYYY-MM-DD format
+  return parts;
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -4294,21 +4297,37 @@ function LiveETABanner({ singleMatter }) {
   ];
 
   const isLive = !!(liveCourtData && liveCourtData.length > 0);
+  // Filter out "not in session" courts from live data
+  const activeCourts = isLive ? liveCourtData.filter(c => c.status !== 'not_in_session') : [];
   const avgTimePerItem = 5; // minutes
   const mattersWithEta = todayMatters.map((m, idx) => {
     const userItemNo = m.itemNo || (idx + 1) * 3 + 5;
     // Use real court view data if available
     let currentItem;
-    if (isLive) {
-      // Try to match court from live data
-      const courtMatch = liveCourtData.find(c => c.coram && m.coram && c.coram.includes(m.coram.split(',')[0]?.trim()));
-      currentItem = courtMatch ? parseInt(courtMatch.currentItem) || 1 : 1 + Math.floor(idx * 2);
+    let matchedCourt = null;
+    if (isLive && activeCourts.length > 0) {
+      // Match by case reference in live data (exact match on the case being heard)
+      matchedCourt = activeCourts.find(c => c.caseRef && m.caseRef && c.caseRef === m.caseRef);
+      // Fallback: match by court number if matter has courtNo
+      if (!matchedCourt && m.courtNo) {
+        matchedCourt = activeCourts.find(c => c.courtNo === String(m.courtNo));
+      }
+      // Fallback: match by coram (judge name)
+      if (!matchedCourt && m.coram) {
+        matchedCourt = activeCourts.find(c => c.coram && m.coram && c.coram.includes(m.coram.split(',')[0]?.trim()));
+      }
+      // Fallback: match by petitioner counsel name
+      if (!matchedCourt && m.title) {
+        const petName = m.title.split(' v. ')[0]?.split(' Vs. ')[0]?.trim();
+        if (petName) matchedCourt = activeCourts.find(c => c.title && c.title.includes(petName.toUpperCase()));
+      }
+      currentItem = matchedCourt ? parseInt(matchedCourt.currentItem) || 1 : 1 + Math.floor(idx * 2);
     } else {
       currentItem = Math.min(userItemNo, 1 + simTick + Math.floor(idx * 2)); // simulated progress
     }
     const itemsAway = Math.max(0, userItemNo - currentItem);
     const etaMins = itemsAway * avgTimePerItem;
-    const courtRoom = m.coram ? 'Court ' + (idx + 1) : 'Court ' + (idx + 1);
+    const courtRoom = matchedCourt ? 'Court ' + matchedCourt.courtNo : (m.coram ? 'Court ' + (idx + 1) : 'Court ' + (idx + 1));
     const clType = (m.causelistType || '').toLowerCase();
     let category = 'all';
     if (clType === 'fresh') category = 'fresh';

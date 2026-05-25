@@ -7,3 +7,4 @@ push_to_github.sh
 node_modules/
 .DS_Store
 _github_push.html
+test_*.mjs

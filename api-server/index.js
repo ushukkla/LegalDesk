@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 
+// Force Indian Standard Time for all date operations on the server
+process.env.TZ = "Asia/Kolkata";
+
 /**
  * ═══════════════════════════════════════════════════════════════════════
  *  LegalDesk API Server
@@ -40,6 +43,20 @@ const ECOURTS_BASE = "https://services.ecourts.gov.in/ecourtindia_v6";
 const BCI_SEARCH = "https://www.barcouncilofindia.org/advocate-search";
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
+
+// ── Indian Standard Time helpers (UTC+5:30) ──
+function istNow() {
+  return new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+}
+function istDateStr() {
+  // Returns YYYY-MM-DD in IST
+  const d = new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" });
+  const [m, day, y] = d.split("/");
+  return `${y}-${m}-${day}`;
+}
+function istTimestamp() {
+  return new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata", hour12: false });
+}
 
 const CASE_TYPES = {
   A482: { name: "APPLICATION U/s 482", id: "17" },
@@ -209,7 +226,7 @@ function validateBarCouncilFormat(enrollmentNo) {
   }
 
   const year = parseInt(match[3]);
-  if (year < 1960 || year > new Date().getFullYear()) {
+  if (year < 1960 || year > istNow().getFullYear()) {
     return { valid: false, error: `Enrollment year ${year} seems invalid` };
   }
 
@@ -340,7 +357,7 @@ async function fetchAdvocateCases(rollNumber, bench = "allahabad") {
     bench: bench === "lucknow" ? "Lucknow Bench" : "Allahabad",
     totalCases: 0,
     cases: [],
-    fetchedAt: new Date().toISOString(),
+    fetchedAt: istTimestamp(),
   };
 }
 
@@ -376,7 +393,7 @@ function parseAdvocateCases($, rollNumber, bench) {
     bench: bench === "lucknow" ? "Lucknow Bench" : "Allahabad",
     totalCases: cases.length,
     cases,
-    fetchedAt: new Date().toISOString(),
+    fetchedAt: istTimestamp(),
   };
 }
 
@@ -442,7 +459,7 @@ async function fetchCaseStatus(caseType, caseNumber, caseYear, bench = "allahaba
   });
 
   caseData.status = caseData.status || "PENDING";
-  caseData.fetchedAt = new Date().toISOString();
+  caseData.fetchedAt = istTimestamp();
   const data = { status: "success", ...caseData };
   setCache(cacheKey, data, CACHE_TTL.case_status);
   return data;
@@ -507,7 +524,7 @@ async function fetchCaseHistory(caseType, caseNumber, caseYear, bench = "allahab
     listingHistory: history,
     interlocutoryApplications: iAs,
     totalHearings: history.length,
-    fetchedAt: new Date().toISOString(),
+    fetchedAt: istTimestamp(),
   };
   setCache(cacheKey, data, CACHE_TTL.case_history);
   return data;
@@ -538,7 +555,7 @@ async function fetchCauselistToday(bench = "allahabad") {
       causelists.push({
         title: text,
         url: href.startsWith("http") ? href : `${BASE_URL}/causelist/${href}`,
-        date: new Date().toISOString().split("T")[0],
+        date: istDateStr(),
       });
     }
   });
@@ -546,10 +563,10 @@ async function fetchCauselistToday(bench = "allahabad") {
   const data = {
     status: "success",
     bench: bench === "lucknow" ? "Lucknow" : "Allahabad",
-    date: new Date().toISOString().split("T")[0],
+    date: istDateStr(),
     causelists,
     totalLists: causelists.length,
-    fetchedAt: new Date().toISOString(),
+    fetchedAt: istTimestamp(),
   };
   setCache(cacheKey, data, CACHE_TTL.causelist);
   return data;
@@ -570,17 +587,56 @@ async function fetchCourtView(bench = "allahabad") {
   const $ = cheerio.load(page.html);
 
   const courts = [];
+  // Court View table structure:
+  // Court No. | Serial No. | List (cause list type) | Progress | Case Details | Important Information
+  // Case Details cell contains structured text: "Case Details - WRIA/3800/2026  Title:... Petitioner's Counsels -...  Respondent's Counsel -..."
   $("table tr").each((i, tr) => {
-    if (i === 0) return;
+    if (i === 0) return; // skip header
     const cells = [];
     $(tr).find("td").each((j, td) => cells.push($(td).text().trim()));
     if (cells.length >= 3) {
+      const courtNo = cells[0];
+      const serialNo = cells[1]; // current item number being heard
+      const listType = cells[2] || "";
+      const progress = cells[3] || "";
+      const caseDetails = cells[4] || "";
+
+      // Skip "Court NOT in session" rows
+      if (serialNo.toLowerCase().includes("not in session")) {
+        courts.push({
+          courtNo,
+          currentItem: "0",
+          status: "not_in_session",
+          causelistType: null,
+          caseBeingHeard: null,
+          caseRef: null,
+          title: null,
+          petitionerCounsel: null,
+          respondentCounsel: null,
+          coram: null,
+          progress: null,
+        });
+        return;
+      }
+
+      // Parse case details text
+      const caseRefMatch = caseDetails.match(/Case Details\s*[-–]\s*([A-Z0-9\/]+)/i);
+      const titleMatch = caseDetails.match(/Title\s*:?\s*(.+?)(?:\s*Petitioner|$)/i);
+      const petCounselMatch = caseDetails.match(/Petitioner'?s?\s*Counsels?\s*[-–]\s*(.+?)(?:\s*Respondent|$)/i);
+      const resCounselMatch = caseDetails.match(/Respondent'?s?\s*Counsel\s*[-–]\s*(.+?)$/i);
+
       courts.push({
-        courtNo: cells[0],
-        coram: cells[1],
-        currentItem: cells[2],
-        caseBeingHeard: cells[3] || null,
-        causelistType: cells[4] || null,
+        courtNo,
+        currentItem: serialNo,
+        causelistType: listType,
+        progress: progress || null,
+        caseBeingHeard: caseRefMatch ? caseRefMatch[1].trim() : null,
+        caseRef: caseRefMatch ? caseRefMatch[1].trim() : null,
+        title: titleMatch ? titleMatch[1].trim().replace(/\s+/g, ' ') : null,
+        petitionerCounsel: petCounselMatch ? petCounselMatch[1].trim() : null,
+        respondentCounsel: resCounselMatch ? resCounselMatch[1].trim() : null,
+        coram: null, // Court View doesn't show judge names, just court numbers
+        status: "in_session",
       });
     }
   });
@@ -590,7 +646,7 @@ async function fetchCourtView(bench = "allahabad") {
     bench: bench === "lucknow" ? "Lucknow" : "Allahabad",
     courts,
     totalCourts: courts.length,
-    fetchedAt: new Date().toISOString(),
+    fetchedAt: istTimestamp(),
   };
   setCache(cacheKey, data, CACHE_TTL.court_view);
   return data;
@@ -641,7 +697,7 @@ app.use(express.json());
 
 // Request logging
 app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
+  console.log(`[${istTimestamp()}] ${req.method} ${req.path}`);
   next();
 });
 
@@ -732,7 +788,7 @@ app.get("/api/advocate-cases-all/:rollNumber", async (req, res) => {
       allahabadCases: aldCases.length,
       lucknowCases: lkoCases.length,
       cases: allCases,
-      fetchedAt: new Date().toISOString(),
+      fetchedAt: istTimestamp(),
     });
   } catch (err) {
     res.status(500).json({ status: "error", error: err.message });
@@ -791,10 +847,10 @@ app.get("/api/court-view", async (req, res) => {
 
 // ── Court calendar ──
 app.get("/api/court-calendar", (req, res) => {
-  const today = new Date().toISOString().split("T")[0];
+  const today = istDateStr();
   const isHoliday = HOLIDAYS_2026.find(h => h.date === today);
   const isVacation = VACATIONS_2026.find(v => today >= v.start && today <= v.end);
-  const dayOfWeek = new Date().getDay();
+  const dayOfWeek = istNow().getDay();
   const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
 
   res.json({
