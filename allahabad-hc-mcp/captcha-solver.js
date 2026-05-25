@@ -30,6 +30,29 @@ import sharp from "sharp";
 async function preprocessImage(imageBuffer) {
   const variants = [];
 
+  // Strategy 0 (NEW — BEST for Allahabad HC securimage CAPTCHA):
+  // Color-based extraction. The CCMS captcha uses bold dark-teal digits over
+  // a noisy gray background. Plain grayscale + threshold can't separate them
+  // because both end up similar gray. Filter pixel-by-pixel to keep only dark
+  // teal/blue and discard the gray noise, then upscale.
+  try {
+    const { data, info } = await sharp(imageBuffer).raw().toBuffer({ resolveWithObject: true });
+    const w = info.width, h = info.height, ch = info.channels;
+    const mask = Buffer.alloc(w * h);
+    for (let i = 0, j = 0; i < data.length; i += ch, j++) {
+      const r = data[i], g = data[i + 1], b = data[i + 2];
+      const brightness = (r + g + b) / 3;
+      const isDarkTeal = brightness < 180 && b > r && (b + g) > 2 * r + 20;
+      const isVeryDark = brightness < 80;
+      mask[j] = (isDarkTeal || isVeryDark) ? 0 : 255;
+    }
+    const v0 = await sharp(mask, { raw: { width: w, height: h, channels: 1 } })
+      .resize(w * 3, h * 3, { kernel: sharp.kernel.lanczos3 })
+      .png()
+      .toBuffer();
+    variants.push({ name: "color_extract_teal_3x", buffer: v0 });
+  } catch (_) {}
+
   // Strategy 1: High-contrast grayscale + threshold
   try {
     const v1 = await sharp(imageBuffer)
@@ -169,15 +192,23 @@ async function solveCaptchaFromBuffer(imageBuffer) {
 
   const results = [];
 
+  // The Allahabad HC CCMS captcha is 4 digits. For the color-extracted variants
+  // we prefer a digits-only whitelist; for grayscale variants we keep the broader
+  // alphanumeric whitelist as a safety net (in case the captcha style ever changes).
   for (const variant of variants) {
+    const isColorExtract = variant.name.startsWith("color_extract");
     try {
       const { data } = await Tesseract.recognize(variant.buffer, "eng", {
-        tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
-        tessedit_pageseg_mode: "7",  // single line of text
+        tessedit_char_whitelist: isColorExtract
+          ? "0123456789"
+          : "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
+        tessedit_pageseg_mode: isColorExtract ? "8" : "7",  // 8 = single word, 7 = single line
       });
 
       const cleaned = cleanCaptchaText(data.text);
-      const score = scoreCaptchaResult(cleaned, data.confidence);
+      let score = scoreCaptchaResult(cleaned, data.confidence);
+      // Bonus: the CCMS captcha is exactly 4 digits — boost confidence when we get that shape.
+      if (/^\d{4}$/.test(cleaned)) score += 30;
 
       results.push({
         text: cleaned,
@@ -276,18 +307,40 @@ async function solveCourtCaptcha(pageUrl, baseUrl, options = {}) {
 
       const html = await resp.text();
       const setCookies = resp.headers.getSetCookie?.() || [];
-      const sessionToken = setCookies.join("; ");
+      // Set-Cookie values are full cookie specs ("name=value; Path=/; HttpOnly").
+      // The Cookie request header must be just "name1=value1; name2=value2" — strip attributes.
+      const sessionToken = setCookies
+        .map(c => c.split(";")[0].trim())
+        .filter(Boolean)
+        .join("; ");
 
-      // Step 2: Extract CAPTCHA image URL from HTML
-      const captchaMatch = html.match(/<img[^>]+src=["']([^"']*captcha[^"']*)["']/i);
-      if (!captchaMatch) {
-        errors.push(`Attempt ${attempt}: No CAPTCHA image found on page`);
+      // Step 2: Extract CAPTCHA image URL from HTML.
+      // The Allahabad HC CCMS uses securimage.php style URLs (no "captcha" in the path);
+      // try multiple patterns in priority order.
+      const captchaPatterns = [
+        /<img[^>]+id=["']captcha["'][^>]*src=["']([^"']+)["']/i,
+        /<img[^>]+src=["']([^"']+)["'][^>]*id=["']captcha["']/i,
+        /<img[^>]+src=["']([^"']*(?:captcha|kaptcha|securimage|secureimage|getcaptcha)[^"']*)["']/i,
+        /<img[^>]+src=["']([^"']+)["'][^>]+alt=["']captcha["']/i,
+      ];
+      let captchaUrl = null;
+      for (const re of captchaPatterns) {
+        const m = html.match(re);
+        if (m) { captchaUrl = m[1]; break; }
+      }
+      if (!captchaUrl) {
+        errors.push(`Attempt ${attempt}: No CAPTCHA image found on page (tried ${captchaPatterns.length} patterns)`);
         continue;
       }
 
-      let captchaUrl = captchaMatch[1];
       if (!captchaUrl.startsWith("http")) {
-        captchaUrl = `${baseUrl}/${captchaUrl.replace(/^\//, "")}`;
+        // Resolve relative URLs against the requested page URL, not just baseUrl,
+        // so paths like "captcha.php" resolve correctly.
+        try {
+          captchaUrl = new URL(captchaUrl, pageUrl).toString();
+        } catch (_) {
+          captchaUrl = `${baseUrl}/${captchaUrl.replace(/^\//, "")}`;
+        }
       }
 
       // Step 3: Fetch and solve the CAPTCHA

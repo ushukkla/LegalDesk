@@ -1234,6 +1234,19 @@ app.get("/api/causelist-today", async (req, res) => {
   }
 });
 
+// ── advmgmtsys (alpha): expose current capability status ──
+// Full implementation requires per-advocate username+password+captcha-solve through
+// hclko.allahabadhighcourt.in/advmgmtsys/login. The captcha there is a different style
+// (alphanumeric on a blue gradient) — needs its own OCR profile.
+app.get("/api/advmgmtsys-status", (req, res) => {
+  res.json({
+    status: "not_implemented",
+    message: "Authenticated advmgmtsys scrape is on the roadmap. Public CCMS endpoints are working.",
+    loginUrl: "https://hclko.allahabadhighcourt.in/advmgmtsys/login",
+    registerUrl: "https://hclko.allahabadhighcourt.in/advmgmtsys/registration",
+  });
+});
+
 // ── Diagnostics: dry-run a single POST and return raw response ──
 app.get("/api/advocate-dryrun", async (req, res) => {
   try {

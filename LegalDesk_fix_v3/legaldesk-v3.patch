@@ -13,7 +13,7 @@ index 8f2edfd..da99623 100644
 +# Local test scripts
 +allahabad-hc-mcp/ocr_test.mjs
 diff --git a/LegalDesk.html b/LegalDesk.html
-index 198ebc1..8dd229d 100644
+index 198ebc1..103fe5c 100644
 --- a/LegalDesk.html
 +++ b/LegalDesk.html
 @@ -2080,7 +2080,7 @@ const AzureTranslator = {
@@ -38,7 +38,25 @@ index 198ebc1..8dd229d 100644
    /** Convert raw API case data to the app's Matter format */
    apiCaseToMatter(apiCase, index) {
      const id = 'live_' + (apiCase.caseType || 'X') + '_' + (apiCase.caseNo || index) + '_' + (apiCase.year || '');
-@@ -2677,14 +2683,217 @@ const DEFAULT_INVOICES = [
+@@ -2252,6 +2258,17 @@ const COURTS = [
+   'Allahabad High Court (Lucknow Bench)',
+ ];
+ 
++// Auto-detect bench from Advocate Roll Number prefix.
++// Convention at Allahabad HC: "A/..." = Principal Seat (Allahabad), "B/..." = Lucknow Bench.
++// Returns the matching court string from COURTS, or null if we can't tell.
++function suggestCourtFromRoll(rollNumber) {
++  if (!rollNumber) return null;
++  const s = String(rollNumber).trim().toUpperCase();
++  if (/^B\//.test(s)) return COURTS[1]; // Lucknow Bench
++  if (/^A\//.test(s)) return COURTS[0]; // Principal Seat
++  return null;
++}
++
+ // ─────────────────────────────────────────────────────────────────────
+ // CASE TYPE MAPPING - Allahabad High Court
+ // ─────────────────────────────────────────────────────────────────────
+@@ -2677,14 +2694,217 @@ const DEFAULT_INVOICES = [
    { id: 'inv4', subject: 'Retainer Fee - May 2026', total: 50000, date: '2026-05-01', matterId: null },
  ];
  
@@ -262,7 +280,7 @@ index 198ebc1..8dd229d 100644
  const COURT_RESOURCES = {
    judgments: {
      title: 'Judgments & Orders',
-@@ -2983,7 +3192,7 @@ function LoginPage({ onLogin }) {
+@@ -2983,7 +3203,7 @@ function LoginPage({ onLogin }) {
          // Also check localStorage for a cached profile (current session or saved from previous logout)
          const cachedUser = LS.get('user') || LS.get('profile_' + user.uid);
          if ((profile && profile.verified) || (cachedUser && cachedUser.verified && cachedUser.uid === user.uid)) {
@@ -271,7 +289,7 @@ index 198ebc1..8dd229d 100644
            const mergedProfile = { ...(cachedUser || {}), ...(profile || {}) };
            onLogin({
              ...mergedProfile,
-@@ -3028,6 +3237,7 @@ function LoginPage({ onLogin }) {
+@@ -3028,6 +3248,7 @@ function LoginPage({ onLogin }) {
        if (user) {
          setGoogleUser(user);
          setForm(prev => ({ ...prev, name: user.name }));
@@ -279,7 +297,42 @@ index 198ebc1..8dd229d 100644
          let profile = null;
          try {
            const profilePromise = FirestoreService.getProfile(user.uid);
-@@ -3678,8 +3888,9 @@ function DashboardPage() {
+@@ -3300,10 +3521,32 @@ function LoginPage({ onLogin }) {
+               </div>
+               <div className="form-group">
+                 <label className="form-label">Advocate ID / AOR No. <span style={{fontSize:11, color:'var(--text-muted)', fontWeight:400}}>(used for case lookup)</span></label>
+-                <input className="form-input" placeholder="e.g. B/A2401/2019 or AOR/5678" value={form.rollNo} onChange={e => setForm({...form, rollNo: e.target.value})} />
++                <input className="form-input" placeholder="e.g. B/A2401/2019 or AOR/5678" value={form.rollNo} onChange={e => {
++                  const rollNo = e.target.value;
++                  // Auto-suggest the bench from the roll prefix (A/ = Allahabad, B/ = Lucknow Bench).
++                  const suggested = suggestCourtFromRoll(rollNo);
++                  setForm(prev => ({
++                    ...prev,
++                    rollNo,
++                    // Only override the court if the user hasn't manually changed it yet,
++                    // or if their current value is the default.
++                    court: suggested && (prev.court === COURTS[0] || !prev.court) ? suggested : prev.court,
++                  }));
++                }} />
++                {form.rollNo && (() => {
++                  const s = suggestCourtFromRoll(form.rollNo);
++                  if (s && s !== form.court) {
++                    return <div style={{fontSize:11, color:'var(--primary)', marginTop:4}}>
++                      Hint: roll numbers starting with {form.rollNo.trim()[0].toUpperCase()}/ are typically <strong>{s}</strong>.
++                      <button type="button" style={{marginLeft:6, fontSize:11, padding:'2px 8px', border:'1px solid var(--primary)', background:'transparent', color:'var(--primary)', borderRadius:4, cursor:'pointer'}}
++                        onClick={() => setForm(prev => ({...prev, court: s}))}>Use {s.includes('Lucknow') ? 'Lucknow Bench' : 'Principal Seat'}</button>
++                    </div>;
++                  }
++                  return null;
++                })()}
+               </div>
+               <div className="form-group">
+-                <label className="form-label">Select Court</label>
++                <label className="form-label">Select Court / Bench <span style={{fontSize:11, color:'var(--text-muted)', fontWeight:400}}>(determines which bench is queried first)</span></label>
+                 <select className="form-select" value={form.court} onChange={e => setForm({...form, court: e.target.value})}>
+                   {COURTS.map(c => <option key={c} value={c}>{c}</option>)}
+                 </select>
+@@ -3678,8 +3921,9 @@ function DashboardPage() {
      },
      causelists: {
        label: 'Cause Lists', labelHi: 'वाद सूची', icon: Icons.fileText,
@@ -291,7 +344,7 @@ index 198ebc1..8dd229d 100644
        desc: "Today's cause list — cases scheduled for hearing",
      },
      efiling: {
-@@ -3828,20 +4039,26 @@ function DashboardPage() {
+@@ -3828,20 +4072,26 @@ function DashboardPage() {
              <span>{currentPanel.desc} — {liveBench === 'lucknow' ? 'Lucknow Bench' : 'Allahabad (Principal Seat)'}</span>
              <span style={{fontFamily:'monospace', fontSize:10, opacity:0.6}}>{currentUrl.replace('https://',''). split('/').slice(0,2).join('/')}</span>
            </div>
@@ -331,7 +384,7 @@ index 198ebc1..8dd229d 100644
          </div>
        </div>
  
-@@ -3962,24 +4179,8 @@ function DashboardPage() {
+@@ -3962,24 +4212,8 @@ function DashboardPage() {
            </div>
          </div>
          <div>
@@ -358,7 +411,7 @@ index 198ebc1..8dd229d 100644
  
            {/* Quick Actions */}
            <div className="card" style={{marginTop:16}}>
-@@ -4035,6 +4236,74 @@ function DashboardPage() {
+@@ -4035,6 +4269,74 @@ function DashboardPage() {
  // ─────────────────────────────────────────────────────────────────────
  // MATTERS PAGE
  // ─────────────────────────────────────────────────────────────────────
@@ -433,7 +486,7 @@ index 198ebc1..8dd229d 100644
  function MattersPage() {
    const { matters, setMatters, navigate, setSelectedMatter, addToast } = useContext(AppContext);
    const [tab, setTab] = useState('pending');
-@@ -4091,6 +4360,8 @@ function MattersPage() {
+@@ -4091,6 +4393,8 @@ function MattersPage() {
          <button className="btn btn-primary" onClick={()=>setShowModal(true)}>{Icons.plus} Create New</button>
        </div>
  
@@ -442,7 +495,7 @@ index 198ebc1..8dd229d 100644
        <div className="card">
          <div className="card-header" style={{flexWrap:'wrap'}}>
            <div className="tabs">
-@@ -5803,7 +6074,10 @@ function DisplayBoardPage() {
+@@ -5803,7 +6107,10 @@ function DisplayBoardPage() {
                      {Icons.externalLink} Open Live Display Board
                    </button>
                    <button className="btn btn-outline" onClick={() => {
@@ -454,7 +507,7 @@ index 198ebc1..8dd229d 100644
                      addToast('Cause List page opened', 'info');
                    }}>
                      {Icons.fileText} Today's Cause List
-@@ -6001,14 +6275,28 @@ function DisplayBoardPage() {
+@@ -6001,14 +6308,28 @@ function DisplayBoardPage() {
  // LEGAL UPDATES PAGE
  // ─────────────────────────────────────────────────────────────────────
  function LegalUpdatesPage() {
@@ -487,7 +540,124 @@ index 198ebc1..8dd229d 100644
              </div>
              <div className="card-body">
                <div style={{fontWeight:700, fontSize:15, marginBottom:6, lineHeight:1.4}}>{n.title}</div>
-@@ -7480,7 +7768,19 @@ function App() {
+@@ -6707,6 +7028,41 @@ function SettingsPage() {
+   const { user, setUser, theme, setTheme, addToast, teamMembers, setTeamMembers } = useContext(AppContext);
+   const [newMemberName, setNewMemberName] = useState('');
+   const [newMemberPhone, setNewMemberPhone] = useState('');
++  // Editable bench/court — defaults to the suggested bench based on the roll number prefix.
++  const suggestedCourt = suggestCourtFromRoll(user?.rollNo);
++  const [editingCourt, setEditingCourt] = useState(false);
++  const [chosenCourt, setChosenCourt] = useState(user?.court || suggestedCourt || COURTS[0]);
++  // advmgmtsys creds stored ONLY in localStorage (not in our DB; not transmitted to backend
++  // until the user explicitly clicks Connect). When implemented in a later sprint, the backend
++  // will use these creds once per fetch and discard them.
++  const [advmgmtCreds, setAdvmgmtCreds] = useState(() => LS.get('advmgmtsys_creds', { username: user?.rollNo || '', password: '' }));
++  const [showAdvmgmtForm, setShowAdvmgmtForm] = useState(false);
++
++  const saveCourt = () => {
++    const updated = { ...user, court: chosenCourt };
++    setUser(updated);
++    LS.set('user', updated);
++    if (user?.uid && typeof FirestoreService !== 'undefined' && FirestoreService.saveProfile) {
++      FirestoreService.saveProfile(user.uid, updated).catch(() => {});
++    }
++    setEditingCourt(false);
++    addToast('Court / bench updated', 'success');
++  };
++
++  const saveAdvmgmtCreds = () => {
++    if (!advmgmtCreds.username.trim() || !advmgmtCreds.password.trim()) {
++      addToast('Enter both username and password', 'error'); return;
++    }
++    LS.set('advmgmtsys_creds', advmgmtCreds);
++    setShowAdvmgmtForm(false);
++    addToast('Credentials saved locally. (Backend sync not yet wired — coming next sprint.)', 'info');
++  };
++
++  const clearAdvmgmtCreds = () => {
++    LS.remove('advmgmtsys_creds');
++    setAdvmgmtCreds({ username: user?.rollNo || '', password: '' });
++    addToast('Advmgmtsys credentials cleared from this browser', 'info');
++  };
+ 
+   const handleLogout = async () => {
+     // Cache profile for quick re-login (skip verification on next sign-in)
+@@ -6766,8 +7122,72 @@ function SettingsPage() {
+             <input className="form-input" value={user?.rollNo || ''} readOnly />
+           </div>
+           <div className="form-group">
+-            <label className="form-label">Court</label>
+-            <input className="form-input" value={user?.court || ''} readOnly />
++            <label className="form-label">Court / Bench</label>
++            {!editingCourt ? (
++              <div style={{display:'flex', gap:8, alignItems:'center'}}>
++                <input className="form-input" value={user?.court || ''} readOnly style={{flex:1}} />
++                <button type="button" className="btn btn-outline btn-sm" onClick={() => setEditingCourt(true)}>Change</button>
++              </div>
++            ) : (
++              <div style={{display:'flex', gap:8, alignItems:'center'}}>
++                <select className="form-select" value={chosenCourt} onChange={e => setChosenCourt(e.target.value)} style={{flex:1}}>
++                  {COURTS.map(c => <option key={c} value={c}>{c}</option>)}
++                </select>
++                <button type="button" className="btn btn-primary btn-sm" onClick={saveCourt}>Save</button>
++                <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setChosenCourt(user?.court || COURTS[0]); setEditingCourt(false); }}>Cancel</button>
++              </div>
++            )}
++            {suggestedCourt && suggestedCourt !== user?.court && (
++              <div style={{fontSize:11, color:'var(--warning)', marginTop:6}}>
++                Heads up: your roll number <code>{user?.rollNo}</code> starts with <strong>{user?.rollNo?.[0]?.toUpperCase()}/</strong> which usually means <strong>{suggestedCourt}</strong>.
++                {!editingCourt && (
++                  <button type="button" style={{marginLeft:6, fontSize:11, padding:'2px 8px', border:'1px solid var(--warning)', background:'transparent', color:'var(--warning)', borderRadius:4, cursor:'pointer'}}
++                    onClick={() => { setChosenCourt(suggestedCourt); setEditingCourt(true); }}>Switch to {suggestedCourt.includes('Lucknow') ? 'Lucknow Bench' : 'Principal Seat'}</button>
++                )}
++              </div>
++            )}
++          </div>
++
++          {/* ─── CCMS / advmgmtsys credential connection (alpha) ─── */}
++          <div style={{borderTop:'1px solid var(--border)', paddingTop:20, marginTop:20}}>
++            <h3 style={{fontSize:15, fontWeight:700, marginBottom:8}}>{Icons.lock || '🔒'} Court Portal Connection (Alpha)</h3>
++            <p style={{fontSize:12, color:'var(--text-secondary)', marginBottom:12, lineHeight:1.55}}>
++              Public CCMS gives only listed-today / per-year case lookups. To pull your <strong>full case history</strong>{' '}
++              (the way MyMunshi does), LegalDesk needs your <strong>Allahabad HC Advocate Management System (advmgmtsys)</strong> login.
++              Register at <a href="https://hclko.allahabadhighcourt.in/advmgmtsys/registration" target="_blank" rel="noopener" style={{color:'var(--primary)'}}>advmgmtsys/registration</a> if you haven't already.
++            </p>
++            <p style={{fontSize:11, color:'var(--text-muted)', marginBottom:12, lineHeight:1.55}}>
++              <strong>Privacy:</strong> Your password is stored only in <em>this browser</em>. The backend uses it once per scheduled fetch and never persists it.
++              The end-to-end fetcher ships next sprint; for now you can pre-fill your username so it's ready to go.
++            </p>
++            {!showAdvmgmtForm && !LS.get('advmgmtsys_creds') && (
++              <button type="button" className="btn btn-outline btn-sm" onClick={() => setShowAdvmgmtForm(true)}>
++                {Icons.link || '🔗'} Connect CCMS account
++              </button>
++            )}
++            {!showAdvmgmtForm && LS.get('advmgmtsys_creds') && (
++              <div style={{display:'flex', gap:8, alignItems:'center'}}>
++                <span style={{fontSize:12, color:'var(--success)'}}>✓ Credentials saved for <code>{LS.get('advmgmtsys_creds')?.username}</code></span>
++                <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowAdvmgmtForm(true)} style={{marginLeft:'auto'}}>Edit</button>
++                <button type="button" className="btn btn-ghost btn-sm" style={{color:'var(--danger)'}} onClick={clearAdvmgmtCreds}>Clear</button>
++              </div>
++            )}
++            {showAdvmgmtForm && (
++              <div style={{background:'var(--bg-input)', padding:14, borderRadius:'var(--radius)', marginTop:8}}>
++                <div className="form-group" style={{marginBottom:10}}>
++                  <label className="form-label">Username (Advocate Roll, e.g. B/A2401/2019)</label>
++                  <input className="form-input" value={advmgmtCreds.username} onChange={e => setAdvmgmtCreds({...advmgmtCreds, username: e.target.value})} placeholder="B/A2401/2019" />
++                </div>
++                <div className="form-group" style={{marginBottom:10}}>
++                  <label className="form-label">Password</label>
++                  <input className="form-input" type="password" value={advmgmtCreds.password} onChange={e => setAdvmgmtCreds({...advmgmtCreds, password: e.target.value})} placeholder="Your advmgmtsys password" />
++                </div>
++                <div style={{display:'flex', gap:8}}>
++                  <button type="button" className="btn btn-primary btn-sm" onClick={saveAdvmgmtCreds}>Save in browser</button>
++                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowAdvmgmtForm(false)}>Cancel</button>
++                </div>
++              </div>
++            )}
+           </div>
+ 
+           <div style={{borderTop:'1px solid var(--border)', paddingTop:20, marginTop:20}}>
+@@ -7480,7 +7900,19 @@ function App() {
    const [theme, setThemeState] = useState(() => LS.get('theme', 'light'));
    const [currentPage, setCurrentPage] = useState(() => LS.get('currentPage', 'dashboard'));
    const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -508,7 +678,7 @@ index 198ebc1..8dd229d 100644
    const [tasks, setTasksState] = useState(() => LS.get('tasks', DEFAULT_TASKS));
    const [invoices, setInvoicesState] = useState(() => LS.get('invoices', DEFAULT_INVOICES));
    const [calendarTasks, setCalendarTasksState] = useState(() => LS.get('calendarTasks', []));
-@@ -7663,21 +7963,22 @@ function App() {
+@@ -7663,21 +8095,22 @@ function App() {
        // Check if backend is reachable
        const health = await CourtAPI.healthCheck();
        if (health.status !== 'ok') {
@@ -535,7 +705,7 @@ index 198ebc1..8dd229d 100644
          if ((!result || result.status !== 'success' || result.cases?.length === 0)
              && user.rollNo && user.barCouncil && user.rollNo !== user.barCouncil) {
            console.log('[App] No cases with rollNo, trying barCouncil:', user.barCouncil);
-@@ -7687,26 +7988,60 @@ function App() {
+@@ -7687,26 +8120,60 @@ function App() {
            }
          }
  
@@ -607,7 +777,7 @@ index 198ebc1..8dd229d 100644
        } finally {
          if (!cancelled) setLoadingLiveCases(false);
        }
-@@ -7761,7 +8096,7 @@ function App() {
+@@ -7761,7 +8228,7 @@ function App() {
      calendarTasks, setCalendarTasks,
      teamMembers, setTeamMembers,
      selectedMatter, setSelectedMatter, addToast, isOnline,
@@ -727,7 +897,7 @@ index bcf61fe..435f4f4 100644
  
        // Step 3: Fetch and solve the CAPTCHA
 diff --git a/api-server/index.js b/api-server/index.js
-index fb65ac2..9b50496 100644
+index fb65ac2..5bde691 100644
 --- a/api-server/index.js
 +++ b/api-server/index.js
 @@ -34,11 +34,25 @@ import * as cheerio from "cheerio";
@@ -1502,10 +1672,23 @@ index fb65ac2..9b50496 100644
        fetchedAt: istTimestamp(),
      });
    } catch (err) {
-@@ -834,6 +1234,60 @@ app.get("/api/causelist-today", async (req, res) => {
+@@ -834,6 +1234,73 @@ app.get("/api/causelist-today", async (req, res) => {
    }
  });
  
++// ── advmgmtsys (alpha): expose current capability status ──
++// Full implementation requires per-advocate username+password+captcha-solve through
++// hclko.allahabadhighcourt.in/advmgmtsys/login. The captcha there is a different style
++// (alphanumeric on a blue gradient) — needs its own OCR profile.
++app.get("/api/advmgmtsys-status", (req, res) => {
++  res.json({
++    status: "not_implemented",
++    message: "Authenticated advmgmtsys scrape is on the roadmap. Public CCMS endpoints are working.",
++    loginUrl: "https://hclko.allahabadhighcourt.in/advmgmtsys/login",
++    registerUrl: "https://hclko.allahabadhighcourt.in/advmgmtsys/registration",
++  });
++});
++
 +// ── Diagnostics: dry-run a single POST and return raw response ──
 +app.get("/api/advocate-dryrun", async (req, res) => {
 +  try {
@@ -1564,7 +1747,7 @@ index fb65ac2..9b50496 100644
  app.get("/api/court-view", async (req, res) => {
    try {
 diff --git a/index.html b/index.html
-index d6ca6d9..8dd229d 100644
+index d6ca6d9..103fe5c 100644
 --- a/index.html
 +++ b/index.html
 @@ -2162,6 +2162,12 @@ const CourtAPI = {
@@ -1580,7 +1763,25 @@ index d6ca6d9..8dd229d 100644
    /** Convert raw API case data to the app's Matter format */
    apiCaseToMatter(apiCase, index) {
      const id = 'live_' + (apiCase.caseType || 'X') + '_' + (apiCase.caseNo || index) + '_' + (apiCase.year || '');
-@@ -2677,14 +2683,217 @@ const DEFAULT_INVOICES = [
+@@ -2252,6 +2258,17 @@ const COURTS = [
+   'Allahabad High Court (Lucknow Bench)',
+ ];
+ 
++// Auto-detect bench from Advocate Roll Number prefix.
++// Convention at Allahabad HC: "A/..." = Principal Seat (Allahabad), "B/..." = Lucknow Bench.
++// Returns the matching court string from COURTS, or null if we can't tell.
++function suggestCourtFromRoll(rollNumber) {
++  if (!rollNumber) return null;
++  const s = String(rollNumber).trim().toUpperCase();
++  if (/^B\//.test(s)) return COURTS[1]; // Lucknow Bench
++  if (/^A\//.test(s)) return COURTS[0]; // Principal Seat
++  return null;
++}
++
+ // ─────────────────────────────────────────────────────────────────────
+ // CASE TYPE MAPPING - Allahabad High Court
+ // ─────────────────────────────────────────────────────────────────────
+@@ -2677,14 +2694,217 @@ const DEFAULT_INVOICES = [
    { id: 'inv4', subject: 'Retainer Fee - May 2026', total: 50000, date: '2026-05-01', matterId: null },
  ];
  
@@ -1804,7 +2005,42 @@ index d6ca6d9..8dd229d 100644
  const COURT_RESOURCES = {
    judgments: {
      title: 'Judgments & Orders',
-@@ -3679,8 +3888,9 @@ function DashboardPage() {
+@@ -3301,10 +3521,32 @@ function LoginPage({ onLogin }) {
+               </div>
+               <div className="form-group">
+                 <label className="form-label">Advocate ID / AOR No. <span style={{fontSize:11, color:'var(--text-muted)', fontWeight:400}}>(used for case lookup)</span></label>
+-                <input className="form-input" placeholder="e.g. B/A2401/2019 or AOR/5678" value={form.rollNo} onChange={e => setForm({...form, rollNo: e.target.value})} />
++                <input className="form-input" placeholder="e.g. B/A2401/2019 or AOR/5678" value={form.rollNo} onChange={e => {
++                  const rollNo = e.target.value;
++                  // Auto-suggest the bench from the roll prefix (A/ = Allahabad, B/ = Lucknow Bench).
++                  const suggested = suggestCourtFromRoll(rollNo);
++                  setForm(prev => ({
++                    ...prev,
++                    rollNo,
++                    // Only override the court if the user hasn't manually changed it yet,
++                    // or if their current value is the default.
++                    court: suggested && (prev.court === COURTS[0] || !prev.court) ? suggested : prev.court,
++                  }));
++                }} />
++                {form.rollNo && (() => {
++                  const s = suggestCourtFromRoll(form.rollNo);
++                  if (s && s !== form.court) {
++                    return <div style={{fontSize:11, color:'var(--primary)', marginTop:4}}>
++                      Hint: roll numbers starting with {form.rollNo.trim()[0].toUpperCase()}/ are typically <strong>{s}</strong>.
++                      <button type="button" style={{marginLeft:6, fontSize:11, padding:'2px 8px', border:'1px solid var(--primary)', background:'transparent', color:'var(--primary)', borderRadius:4, cursor:'pointer'}}
++                        onClick={() => setForm(prev => ({...prev, court: s}))}>Use {s.includes('Lucknow') ? 'Lucknow Bench' : 'Principal Seat'}</button>
++                    </div>;
++                  }
++                  return null;
++                })()}
+               </div>
+               <div className="form-group">
+-                <label className="form-label">Select Court</label>
++                <label className="form-label">Select Court / Bench <span style={{fontSize:11, color:'var(--text-muted)', fontWeight:400}}>(determines which bench is queried first)</span></label>
+                 <select className="form-select" value={form.court} onChange={e => setForm({...form, court: e.target.value})}>
+                   {COURTS.map(c => <option key={c} value={c}>{c}</option>)}
+                 </select>
+@@ -3679,8 +3921,9 @@ function DashboardPage() {
      },
      causelists: {
        label: 'Cause Lists', labelHi: 'वाद सूची', icon: Icons.fileText,
@@ -1816,7 +2052,7 @@ index d6ca6d9..8dd229d 100644
        desc: "Today's cause list — cases scheduled for hearing",
      },
      efiling: {
-@@ -3829,20 +4039,26 @@ function DashboardPage() {
+@@ -3829,20 +4072,26 @@ function DashboardPage() {
              <span>{currentPanel.desc} — {liveBench === 'lucknow' ? 'Lucknow Bench' : 'Allahabad (Principal Seat)'}</span>
              <span style={{fontFamily:'monospace', fontSize:10, opacity:0.6}}>{currentUrl.replace('https://',''). split('/').slice(0,2).join('/')}</span>
            </div>
@@ -1856,7 +2092,7 @@ index d6ca6d9..8dd229d 100644
          </div>
        </div>
  
-@@ -3963,24 +4179,8 @@ function DashboardPage() {
+@@ -3963,24 +4212,8 @@ function DashboardPage() {
            </div>
          </div>
          <div>
@@ -1883,7 +2119,7 @@ index d6ca6d9..8dd229d 100644
  
            {/* Quick Actions */}
            <div className="card" style={{marginTop:16}}>
-@@ -4036,6 +4236,74 @@ function DashboardPage() {
+@@ -4036,6 +4269,74 @@ function DashboardPage() {
  // ─────────────────────────────────────────────────────────────────────
  // MATTERS PAGE
  // ─────────────────────────────────────────────────────────────────────
@@ -1958,7 +2194,7 @@ index d6ca6d9..8dd229d 100644
  function MattersPage() {
    const { matters, setMatters, navigate, setSelectedMatter, addToast } = useContext(AppContext);
    const [tab, setTab] = useState('pending');
-@@ -4092,6 +4360,8 @@ function MattersPage() {
+@@ -4092,6 +4393,8 @@ function MattersPage() {
          <button className="btn btn-primary" onClick={()=>setShowModal(true)}>{Icons.plus} Create New</button>
        </div>
  
@@ -1967,7 +2203,7 @@ index d6ca6d9..8dd229d 100644
        <div className="card">
          <div className="card-header" style={{flexWrap:'wrap'}}>
            <div className="tabs">
-@@ -5804,7 +6074,10 @@ function DisplayBoardPage() {
+@@ -5804,7 +6107,10 @@ function DisplayBoardPage() {
                      {Icons.externalLink} Open Live Display Board
                    </button>
                    <button className="btn btn-outline" onClick={() => {
@@ -1979,7 +2215,7 @@ index d6ca6d9..8dd229d 100644
                      addToast('Cause List page opened', 'info');
                    }}>
                      {Icons.fileText} Today's Cause List
-@@ -6002,14 +6275,28 @@ function DisplayBoardPage() {
+@@ -6002,14 +6308,28 @@ function DisplayBoardPage() {
  // LEGAL UPDATES PAGE
  // ─────────────────────────────────────────────────────────────────────
  function LegalUpdatesPage() {
@@ -2012,7 +2248,124 @@ index d6ca6d9..8dd229d 100644
              </div>
              <div className="card-body">
                <div style={{fontWeight:700, fontSize:15, marginBottom:6, lineHeight:1.4}}>{n.title}</div>
-@@ -7481,7 +7768,19 @@ function App() {
+@@ -6708,6 +7028,41 @@ function SettingsPage() {
+   const { user, setUser, theme, setTheme, addToast, teamMembers, setTeamMembers } = useContext(AppContext);
+   const [newMemberName, setNewMemberName] = useState('');
+   const [newMemberPhone, setNewMemberPhone] = useState('');
++  // Editable bench/court — defaults to the suggested bench based on the roll number prefix.
++  const suggestedCourt = suggestCourtFromRoll(user?.rollNo);
++  const [editingCourt, setEditingCourt] = useState(false);
++  const [chosenCourt, setChosenCourt] = useState(user?.court || suggestedCourt || COURTS[0]);
++  // advmgmtsys creds stored ONLY in localStorage (not in our DB; not transmitted to backend
++  // until the user explicitly clicks Connect). When implemented in a later sprint, the backend
++  // will use these creds once per fetch and discard them.
++  const [advmgmtCreds, setAdvmgmtCreds] = useState(() => LS.get('advmgmtsys_creds', { username: user?.rollNo || '', password: '' }));
++  const [showAdvmgmtForm, setShowAdvmgmtForm] = useState(false);
++
++  const saveCourt = () => {
++    const updated = { ...user, court: chosenCourt };
++    setUser(updated);
++    LS.set('user', updated);
++    if (user?.uid && typeof FirestoreService !== 'undefined' && FirestoreService.saveProfile) {
++      FirestoreService.saveProfile(user.uid, updated).catch(() => {});
++    }
++    setEditingCourt(false);
++    addToast('Court / bench updated', 'success');
++  };
++
++  const saveAdvmgmtCreds = () => {
++    if (!advmgmtCreds.username.trim() || !advmgmtCreds.password.trim()) {
++      addToast('Enter both username and password', 'error'); return;
++    }
++    LS.set('advmgmtsys_creds', advmgmtCreds);
++    setShowAdvmgmtForm(false);
++    addToast('Credentials saved locally. (Backend sync not yet wired — coming next sprint.)', 'info');
++  };
++
++  const clearAdvmgmtCreds = () => {
++    LS.remove('advmgmtsys_creds');
++    setAdvmgmtCreds({ username: user?.rollNo || '', password: '' });
++    addToast('Advmgmtsys credentials cleared from this browser', 'info');
++  };
+ 
+   const handleLogout = async () => {
+     // Cache profile for quick re-login (skip verification on next sign-in)
+@@ -6767,8 +7122,72 @@ function SettingsPage() {
+             <input className="form-input" value={user?.rollNo || ''} readOnly />
+           </div>
+           <div className="form-group">
+-            <label className="form-label">Court</label>
+-            <input className="form-input" value={user?.court || ''} readOnly />
++            <label className="form-label">Court / Bench</label>
++            {!editingCourt ? (
++              <div style={{display:'flex', gap:8, alignItems:'center'}}>
++                <input className="form-input" value={user?.court || ''} readOnly style={{flex:1}} />
++                <button type="button" className="btn btn-outline btn-sm" onClick={() => setEditingCourt(true)}>Change</button>
++              </div>
++            ) : (
++              <div style={{display:'flex', gap:8, alignItems:'center'}}>
++                <select className="form-select" value={chosenCourt} onChange={e => setChosenCourt(e.target.value)} style={{flex:1}}>
++                  {COURTS.map(c => <option key={c} value={c}>{c}</option>)}
++                </select>
++                <button type="button" className="btn btn-primary btn-sm" onClick={saveCourt}>Save</button>
++                <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setChosenCourt(user?.court || COURTS[0]); setEditingCourt(false); }}>Cancel</button>
++              </div>
++            )}
++            {suggestedCourt && suggestedCourt !== user?.court && (
++              <div style={{fontSize:11, color:'var(--warning)', marginTop:6}}>
++                Heads up: your roll number <code>{user?.rollNo}</code> starts with <strong>{user?.rollNo?.[0]?.toUpperCase()}/</strong> which usually means <strong>{suggestedCourt}</strong>.
++                {!editingCourt && (
++                  <button type="button" style={{marginLeft:6, fontSize:11, padding:'2px 8px', border:'1px solid var(--warning)', background:'transparent', color:'var(--warning)', borderRadius:4, cursor:'pointer'}}
++                    onClick={() => { setChosenCourt(suggestedCourt); setEditingCourt(true); }}>Switch to {suggestedCourt.includes('Lucknow') ? 'Lucknow Bench' : 'Principal Seat'}</button>
++                )}
++              </div>
++            )}
++          </div>
++
++          {/* ─── CCMS / advmgmtsys credential connection (alpha) ─── */}
++          <div style={{borderTop:'1px solid var(--border)', paddingTop:20, marginTop:20}}>
++            <h3 style={{fontSize:15, fontWeight:700, marginBottom:8}}>{Icons.lock || '🔒'} Court Portal Connection (Alpha)</h3>
++            <p style={{fontSize:12, color:'var(--text-secondary)', marginBottom:12, lineHeight:1.55}}>
++              Public CCMS gives only listed-today / per-year case lookups. To pull your <strong>full case history</strong>{' '}
++              (the way MyMunshi does), LegalDesk needs your <strong>Allahabad HC Advocate Management System (advmgmtsys)</strong> login.
++              Register at <a href="https://hclko.allahabadhighcourt.in/advmgmtsys/registration" target="_blank" rel="noopener" style={{color:'var(--primary)'}}>advmgmtsys/registration</a> if you haven't already.
++            </p>
++            <p style={{fontSize:11, color:'var(--text-muted)', marginBottom:12, lineHeight:1.55}}>
++              <strong>Privacy:</strong> Your password is stored only in <em>this browser</em>. The backend uses it once per scheduled fetch and never persists it.
++              The end-to-end fetcher ships next sprint; for now you can pre-fill your username so it's ready to go.
++            </p>
++            {!showAdvmgmtForm && !LS.get('advmgmtsys_creds') && (
++              <button type="button" className="btn btn-outline btn-sm" onClick={() => setShowAdvmgmtForm(true)}>
++                {Icons.link || '🔗'} Connect CCMS account
++              </button>
++            )}
++            {!showAdvmgmtForm && LS.get('advmgmtsys_creds') && (
++              <div style={{display:'flex', gap:8, alignItems:'center'}}>
++                <span style={{fontSize:12, color:'var(--success)'}}>✓ Credentials saved for <code>{LS.get('advmgmtsys_creds')?.username}</code></span>
++                <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowAdvmgmtForm(true)} style={{marginLeft:'auto'}}>Edit</button>
++                <button type="button" className="btn btn-ghost btn-sm" style={{color:'var(--danger)'}} onClick={clearAdvmgmtCreds}>Clear</button>
++              </div>
++            )}
++            {showAdvmgmtForm && (
++              <div style={{background:'var(--bg-input)', padding:14, borderRadius:'var(--radius)', marginTop:8}}>
++                <div className="form-group" style={{marginBottom:10}}>
++                  <label className="form-label">Username (Advocate Roll, e.g. B/A2401/2019)</label>
++                  <input className="form-input" value={advmgmtCreds.username} onChange={e => setAdvmgmtCreds({...advmgmtCreds, username: e.target.value})} placeholder="B/A2401/2019" />
++                </div>
++                <div className="form-group" style={{marginBottom:10}}>
++                  <label className="form-label">Password</label>
++                  <input className="form-input" type="password" value={advmgmtCreds.password} onChange={e => setAdvmgmtCreds({...advmgmtCreds, password: e.target.value})} placeholder="Your advmgmtsys password" />
++                </div>
++                <div style={{display:'flex', gap:8}}>
++                  <button type="button" className="btn btn-primary btn-sm" onClick={saveAdvmgmtCreds}>Save in browser</button>
++                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowAdvmgmtForm(false)}>Cancel</button>
++                </div>
++              </div>
++            )}
+           </div>
+ 
+           <div style={{borderTop:'1px solid var(--border)', paddingTop:20, marginTop:20}}>
+@@ -7481,7 +7900,19 @@ function App() {
    const [theme, setThemeState] = useState(() => LS.get('theme', 'light'));
    const [currentPage, setCurrentPage] = useState(() => LS.get('currentPage', 'dashboard'));
    const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -2033,7 +2386,7 @@ index d6ca6d9..8dd229d 100644
    const [tasks, setTasksState] = useState(() => LS.get('tasks', DEFAULT_TASKS));
    const [invoices, setInvoicesState] = useState(() => LS.get('invoices', DEFAULT_INVOICES));
    const [calendarTasks, setCalendarTasksState] = useState(() => LS.get('calendarTasks', []));
-@@ -7664,21 +7963,22 @@ function App() {
+@@ -7664,21 +8095,22 @@ function App() {
        // Check if backend is reachable
        const health = await CourtAPI.healthCheck();
        if (health.status !== 'ok') {
@@ -2060,7 +2413,7 @@ index d6ca6d9..8dd229d 100644
          if ((!result || result.status !== 'success' || result.cases?.length === 0)
              && user.rollNo && user.barCouncil && user.rollNo !== user.barCouncil) {
            console.log('[App] No cases with rollNo, trying barCouncil:', user.barCouncil);
-@@ -7688,26 +7988,60 @@ function App() {
+@@ -7688,26 +8120,60 @@ function App() {
            }
          }
  
@@ -2132,7 +2485,7 @@ index d6ca6d9..8dd229d 100644
        } finally {
          if (!cancelled) setLoadingLiveCases(false);
        }
-@@ -7762,7 +8096,7 @@ function App() {
+@@ -7762,7 +8228,7 @@ function App() {
      calendarTasks, setCalendarTasks,
      teamMembers, setTeamMembers,
      selectedMatter, setSelectedMatter, addToast, isOnline,
