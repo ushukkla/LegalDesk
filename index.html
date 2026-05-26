@@ -4301,7 +4301,9 @@ function LiveFetchBanner() {
   const { liveFetchStatus, loadingLiveCases, user, matters } = useContext(AppContext);
   if (!user) return null;
   // Detect whether the visible matters are the canned demo set (Rajesh Kumar Mishra etc.)
-  const isDemoData = matters?.length > 0 && matters[0]?.id === 'm1' && matters[0]?.title?.includes('Rajesh Kumar Mishra');
+  // — but NOT if any of the visible matters came from a live source (advmgmtsys or public CCMS).
+  const hasAnyLive = (matters || []).some(m => m?._liveData || m?._source === 'advmgmtsys' || (typeof m?.id === 'string' && (m.id.startsWith('live_') || m.id.startsWith('advm_'))));
+  const isDemoData = !hasAnyLive && matters?.length > 0 && matters[0]?.id === 'm1' && matters[0]?.title?.includes('Rajesh Kumar Mishra');
   const status = liveFetchStatus || { kind: 'idle' };
 
   if (isDemoData && (user.barCouncil || user.rollNo)) {
@@ -7189,8 +7191,17 @@ function SettingsPage() {
     });
     if (typeof setMatters === 'function') {
       setMatters(prev => {
-        // Replace any prior advmgmtsys-sourced matters, keep manually-added ones.
-        const keep = (prev || []).filter(p => p._source !== 'advmgmtsys' && !(typeof p.id === 'string' && p.id.startsWith('live_')));
+        // Replace any prior advmgmtsys-sourced matters. Keep manually-added ones.
+        // Also drop public-CCMS auto-fetched matters that duplicate any advmgmtsys caseRef,
+        // since advmgmtsys is authoritative for that advocate.
+        const newRefs = new Set(liveCases.map(m => m.caseRef).filter(Boolean));
+        const keep = (prev || []).filter(p => {
+          if (!p) return false;
+          if (p._source === 'advmgmtsys') return false; // being replaced
+          if (typeof p.id === 'string' && p.id.startsWith('advm_')) return false;
+          if (p.caseRef && newRefs.has(p.caseRef)) return false; // de-dupe with public-CCMS results
+          return true;
+        });
         return [...liveCases, ...keep];
       });
     }
@@ -8365,56 +8376,83 @@ function App() {
           }
         }
 
-        // Cases come back as either matters that already existed (synced via live id prefix)
-        // or as new ones. Either way, we keep manually-added matters and replace the live ones.
+        // Multi-source merge: matters can come from three places —
+        //   1) Public CCMS auto-fetch (id "live_*", _liveData=true, no _source)
+        //   2) Authenticated advmgmtsys sync (id "advm_*", _liveData=true, _source="advmgmtsys")
+        //   3) Manually added by the user (id "m*", no _liveData)
+        // Each source only replaces ITS OWN matters; the other two sources are preserved.
+        // Without this, the public-CCMS auto-fetch was wiping out advmgmtsys-synced matters.
         const existingMatters = LS.get('matters', []) || [];
-        const localOnlyMatters = existingMatters.filter(m =>
-          m && !m._liveData && !(typeof m.id === 'string' && m.id.startsWith('live_'))
-        );
+        const fromAdvmgmtsys = existingMatters.filter(m => m && m._source === 'advmgmtsys');
+        const localOnlyMatters = existingMatters.filter(m => {
+          if (!m) return false;
+          if (m._source === 'advmgmtsys') return false; // tracked separately, re-added below
+          if (m._liveData) return false;                  // stale public-CCMS data, drop it
+          if (typeof m.id === 'string' && m.id.startsWith('live_')) return false;
+          return true;
+        });
+        const haveAdvmgmtsys = fromAdvmgmtsys.length > 0;
+
+        // Helper: dedupe by caseRef so public-CCMS results don't double-count
+        // a case already synced from advmgmtsys.
+        const advmgmtRefs = new Set(fromAdvmgmtsys.map(m => m.caseRef).filter(Boolean));
 
         if (result && result.status === 'success' && result.cases?.length > 0) {
-          const liveCases = result.cases.map((c, i) => {
-            const m = CourtAPI.apiCaseToMatter(c, i);
-            m._liveData = true;
-            return m;
-          });
-          const merged = [...liveCases, ...localOnlyMatters];
+          const liveCases = result.cases
+            .map((c, i) => { const m = CourtAPI.apiCaseToMatter(c, i); m._liveData = true; return m; })
+            .filter(m => !advmgmtRefs.has(m.caseRef));
+          const merged = [...fromAdvmgmtsys, ...liveCases, ...localOnlyMatters];
           setMattersState(merged);
           LS.set('matters', merged);
           LS.set('matters_lastSync', Date.now());
           setLiveFetchStatus({
             kind: 'success',
-            message: `Loaded ${liveCases.length} live case(s).`,
+            message: `Loaded ${liveCases.length} new + ${fromAdvmgmtsys.length} from advmgmtsys.`,
             allahabadCount: result.allahabadCases || 0,
             lucknowCount: result.lucknowCases || 0,
             benchStatus: result.benchStatus,
           });
-          addToast(`Loaded ${liveCases.length} live case(s) from Allahabad HC`, 'success');
+          if (liveCases.length > 0) addToast(`Loaded ${liveCases.length} additional case(s) from public CCMS`, 'success');
         } else if (result && result.status === 'upstream_maintenance') {
-          // Don't seed demo matters — show real empty state with clear maintenance reason.
-          const onlyLocal = localOnlyMatters;
-          setMattersState(onlyLocal);
-          LS.set('matters', onlyLocal);
+          const merged = [...fromAdvmgmtsys, ...localOnlyMatters];
+          setMattersState(merged);
+          LS.set('matters', merged);
           LS.set('matters_lastSync', Date.now());
-          setLiveFetchStatus({
-            kind: 'upstream_maintenance',
-            message: 'Allahabad HC CCMS (Lucknow Bench) is currently in maintenance. Live matters will appear when the court portal is back online — typically within a few hours.',
-            benchStatus: result.benchStatus,
-          });
-          addToast('Court portal is in maintenance. Will retry automatically.', 'info');
+          if (haveAdvmgmtsys) {
+            // Don't worry the user — they already have advmgmtsys matters, public bench is just down.
+            setLiveFetchStatus({ kind: 'success', message: `Showing ${fromAdvmgmtsys.length} matters from advmgmtsys. Public Lucknow CCMS is in maintenance — will retry later.`, allahabadCount: 0, lucknowCount: fromAdvmgmtsys.length, benchStatus: result.benchStatus });
+          } else {
+            setLiveFetchStatus({
+              kind: 'upstream_maintenance',
+              message: 'Allahabad HC CCMS (Lucknow Bench) is currently in maintenance. Live matters will appear when the court portal is back online — typically within a few hours.',
+              benchStatus: result.benchStatus,
+            });
+            addToast('Court portal is in maintenance. Will retry automatically.', 'info');
+          }
         } else {
-          // No live cases found for this roll number — drop demo matters too,
-          // keep only manually-added ones, and tell the user clearly.
-          setMattersState(localOnlyMatters);
-          LS.set('matters', localOnlyMatters);
+          // Public CCMS returned no matches. Don't clobber the advmgmtsys-synced cases.
+          const merged = [...fromAdvmgmtsys, ...localOnlyMatters];
+          setMattersState(merged);
+          LS.set('matters', merged);
           LS.set('matters_lastSync', Date.now());
-          setLiveFetchStatus({
-            kind: 'no_cases',
-            message: `No cases found on the Allahabad HC CCMS for roll number "${lookupId}". Verify your Advocate Roll Number in Settings (format: B/A2401/2019), or add matters manually.`,
-            benchStatus: result?.benchStatus,
-            lookupId,
-          });
-          addToast('No cases found for your roll number. Check Settings to verify it.', 'info');
+          if (haveAdvmgmtsys) {
+            // Stay silent — the user has data from advmgmtsys, public CCMS having nothing for them is expected for Lucknow advocates.
+            setLiveFetchStatus({
+              kind: 'success',
+              message: `Showing ${fromAdvmgmtsys.length} matters from advmgmtsys. Public CCMS has no additional cases for this roll.`,
+              allahabadCount: 0,
+              lucknowCount: fromAdvmgmtsys.length,
+              benchStatus: result?.benchStatus,
+            });
+          } else {
+            setLiveFetchStatus({
+              kind: 'no_cases',
+              message: `No cases found on the Allahabad HC CCMS for roll number "${lookupId}". This is expected if you're a Lucknow Bench advocate — use the Sync Now button in Settings to pull your matters from advmgmtsys.`,
+              benchStatus: result?.benchStatus,
+              lookupId,
+            });
+            addToast('Tip: B/* roll numbers are Lucknow Bench — use Settings → Sync Now to load matters.', 'info');
+          }
         }
       } catch (err) {
         console.error('[App] Live case fetch error:', err);
