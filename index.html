@@ -2100,7 +2100,7 @@ const AzureTranslator = {
 // ─────────────────────────────────────────────────────────────────────
 const CourtAPI = {
   // Base URL — hardcoded, not user-configurable
-  baseUrl: 'https://legaldeskai.fly.dev',
+  baseUrl: 'https://legaldesk-api.onrender.com',
 
   async _fetch(path, options = {}) {
     try {
@@ -2191,6 +2191,15 @@ const CourtAPI = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sessionId, username, password, captcha, reuseAuth }),
+    });
+  },
+
+  /** Fetch the full detail page for one advmgmtsys-sourced matter. Requires an active auth session. */
+  async advmgmtsysDetail({ username, caseRef, detailUrl, force }) {
+    return this._fetch('/api/advmgmtsys-detail', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, caseRef, detailUrl, force: !!force }),
     });
   },
 
@@ -4349,7 +4358,7 @@ function LiveFetchBanner() {
   if (status.kind === 'backend_down') {
     return (
       <div style={{padding:'12px 16px', marginBottom:16, borderRadius:'var(--radius)', background:'var(--danger-bg)', color:'var(--danger)', border:'1px solid var(--danger)', fontSize:13}}>
-        Backend API at <code>legaldeskai.fly.dev</code> is unreachable. Free Render tier sleeps after 15 min — first request can take 30s. Wait, then refresh.
+        Backend API at <code>legaldesk-api.onrender.com</code> is unreachable. Free Render tier sleeps after 15 min — first request can take 30s. Wait, then refresh.
       </div>
     );
   }
@@ -5293,6 +5302,85 @@ function MatterDetailPage() {
     return () => { cancelled = true; };
   }, [m?.id, backendOnline]);
 
+  // Auto-fetch the full advmgmtsys detail page for advmgmtsys-sourced matters
+  // that haven't been enriched yet. Uses the cached auth session — no captcha needed.
+  const [fetchingAdvmgmtDetail, setFetchingAdvmgmtDetail] = useState(false);
+  const [advmgmtDetailError, setAdvmgmtDetailError] = useState(null);
+  const refreshAdvmgmtDetail = useCallback(async (force = false) => {
+    if (!m || m._source !== 'advmgmtsys') return;
+    const creds = LS.get('advmgmtsys_creds');
+    if (!creds?.username) {
+      setAdvmgmtDetailError('No advmgmtsys credentials saved. Set them in Settings.');
+      return;
+    }
+    if (!m._detailUrl) {
+      setAdvmgmtDetailError('No detail URL captured for this matter. Click Sync Now in Settings to re-sync with v5 list capture.');
+      return;
+    }
+    setFetchingAdvmgmtDetail(true);
+    setAdvmgmtDetailError(null);
+    try {
+      const r = await CourtAPI.advmgmtsysDetail({
+        username: creds.username,
+        caseRef: m.caseRef,
+        detailUrl: m._detailUrl,
+        force,
+      });
+      if (r.status !== 'success') {
+        setAdvmgmtDetailError(r.error || 'Could not fetch matter detail.');
+        return;
+      }
+      // Merge normalized fields into the matter — only overwrite empty/missing values,
+      // and keep user-edited fields (notes, userNextDate, priority) intact.
+      const n = r.normalized || {};
+      const updates = { _detailFetched: Date.now(), _advmgmtFields: r.fields };
+      if (!m.petitioner && n.petitioner) updates.petitioner = n.petitioner;
+      if (!m.respondent && n.respondent) updates.respondent = n.respondent;
+      if (!m.stage && n.stage) updates.stage = n.stage;
+      if (!m.benchType && n.benchType) updates.benchType = n.benchType;
+      if (!m.judicialBranch && n.judicialBranch) updates.judicialBranch = n.judicialBranch;
+      if (!m.causelistType && n.causelistType) updates.causelistType = n.causelistType;
+      if (!m.coram && n.coram) updates.coram = n.coram;
+      if (!m.firstHearing && n.firstHearing) updates.firstHearing = n.firstHearing;
+      if (!m.lastHearing && n.lastHearing) updates.lastHearing = n.lastHearing;
+      if (!m.nextHearing && n.nextHearing) updates.nextHearing = n.nextHearing;
+      if (!m.state && n.state) updates.state = n.state;
+      if (!m.district && n.district) updates.district = n.district;
+      if (r.iaDetails?.length > 0 && (!m.iaDetails || m.iaDetails.length === 0)) {
+        updates.iaDetails = r.iaDetails.map(ia => ({
+          appId: ia.ia_number || ia.ia_no || ia['ia number'] || '',
+          classification: ia.classification || ia.type || '',
+          party: ia.party || ia.parties || '',
+          filingDate: ia['filing date'] || ia.filed || ia.filed_on || '',
+          status: ia.status || '',
+        }));
+      }
+      if (r.listingHistory?.length > 0 && (!m.listingHistory || m.listingHistory.length === 0)) {
+        updates.listingHistory = r.listingHistory.map(lh => ({
+          date: lh.date || lh['date of listing'] || lh['listing date'] || '',
+          bench: lh.bench || lh.coram || '',
+          causeType: lh.purpose || lh['list type'] || lh['causelist type'] || '',
+          order: lh.order || lh.status || lh.outcome || '',
+        }));
+      }
+      const updated = { ...m, ...updates };
+      setSelectedMatter(updated);
+      setMatters(prev => prev.map(x => x.id === m.id ? updated : x));
+      if (force) addToast('Refreshed from advmgmtsys', 'success');
+    } catch (err) {
+      setAdvmgmtDetailError(err.message);
+    } finally {
+      setFetchingAdvmgmtDetail(false);
+    }
+  }, [m?.id]);
+
+  // Auto-fetch on mount when this is an advmgmtsys matter without detail yet
+  useEffect(() => {
+    if (m?._source === 'advmgmtsys' && !m._detailFetched && m._detailUrl) {
+      refreshAdvmgmtDetail(false);
+    }
+  }, [m?.id]);
+
   if (!m) return <div className="content"><div className="empty-state"><h3>No matter selected</h3><button className="btn btn-primary mt-16" onClick={()=>navigate('matters')}>Go to Matters</button></div></div>;
 
   const updateMatter = (updates) => {
@@ -5400,6 +5488,33 @@ function MatterDetailPage() {
       <div style={{marginBottom:8, fontSize:13, color:'var(--text-secondary)'}}>{m.court}</div>
       <div style={{marginBottom:20, fontSize:16, fontWeight:600}}>{m.title}</div>
 
+      {/* advmgmtsys detail-fetch status (only shown for advmgmtsys-sourced matters) */}
+      {m._source === 'advmgmtsys' && (
+        <div style={{padding:'10px 14px', marginBottom:16, borderRadius:'var(--radius)', background:fetchingAdvmgmtDetail ? 'var(--primary-bg)' : (advmgmtDetailError ? 'var(--danger-bg)' : (m._detailFetched ? 'var(--success-bg)' : 'var(--warning-bg)')), color:fetchingAdvmgmtDetail ? 'var(--primary)' : (advmgmtDetailError ? 'var(--danger)' : (m._detailFetched ? 'var(--success)' : 'var(--warning)')), fontSize:12, display:'flex', alignItems:'center', gap:10, flexWrap:'wrap'}}>
+          {fetchingAdvmgmtDetail ? (
+            <>
+              <div className="spinner" style={{width:14, height:14, border:'2px solid currentColor', borderRightColor:'transparent', borderRadius:'50%', animation:'spin 0.8s linear infinite'}} />
+              Fetching full details from advmgmtsys…
+            </>
+          ) : advmgmtDetailError ? (
+            <>
+              <span style={{fontWeight:600}}>Couldn't fetch detail:</span> {advmgmtDetailError}
+              <button className="btn btn-sm btn-ghost" style={{marginLeft:'auto', color:'inherit'}} onClick={() => refreshAdvmgmtDetail(true)}>Retry</button>
+            </>
+          ) : m._detailFetched ? (
+            <>
+              <span>✓ Full detail loaded from advmgmtsys ({new Date(m._detailFetched).toLocaleTimeString('en-IN', {hour12:false})})</span>
+              <button className="btn btn-sm btn-ghost" style={{marginLeft:'auto', color:'inherit'}} onClick={() => refreshAdvmgmtDetail(true)}>Refresh</button>
+            </>
+          ) : (
+            <>
+              <span>Limited info — click Refresh to pull full record from advmgmtsys.</span>
+              <button className="btn btn-sm btn-ghost" style={{marginLeft:'auto', color:'inherit'}} onClick={() => refreshAdvmgmtDetail(true)}>Refresh now</button>
+            </>
+          )}
+        </div>
+      )}
+
       {/* Live ETA for this matter */}
       <LiveETABanner singleMatter={m} />
 
@@ -5443,6 +5558,33 @@ function MatterDetailPage() {
 
           {/* Petition Summary */}
           <PetitionSummary matter={m} updateMatter={updateMatter} addToast={addToast} />
+
+          {/* Additional Fields from advmgmtsys — any label/value pairs the parser found beyond the standard ones */}
+          {m._source === 'advmgmtsys' && m._advmgmtFields && Object.keys(m._advmgmtFields).length > 0 && (() => {
+            // Hide labels already shown elsewhere in standard rows
+            const STANDARD = ['case','cnr','petitioner','applicant','appellant','respondent','opposite','stage','bench type','judicial branch','causelist','list type','coram','judge','first hearing','last hearing','next hearing','state','district','filing date','date of filing'];
+            const extras = Object.entries(m._advmgmtFields).filter(([k]) =>
+              !STANDARD.some(s => k.includes(s))
+            );
+            if (extras.length === 0) return null;
+            return (
+              <div className="card mb-24">
+                <div className="card-header"><span className="card-title">Additional Court Details</span><span style={{fontSize:11, color:'var(--text-muted)'}}>from advmgmtsys</span></div>
+                <div className="card-body" style={{padding:0}}>
+                  <table className="info-table">
+                    <tbody>
+                      {extras.map(([k, v]) => (
+                        <tr key={k}>
+                          <td style={{textTransform:'capitalize'}}>{k}</td>
+                          <td>{v}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Listing History */}
           <div className="card mb-24">
@@ -7173,8 +7315,10 @@ function SettingsPage() {
 
   const applySyncResult = (r) => {
     // Convert advmgmtsys cases to the app's matter shape and merge.
+    // Carry the v5 enriched fields (detailUrl, listingDates, rawCells) onto the matter
+    // so the detail page can auto-fetch the full record on demand.
     const liveCases = (r.cases || []).map((c, i) => {
-      const m = CourtAPI.apiCaseToMatter ? CourtAPI.apiCaseToMatter(c, i) : {
+      const base = CourtAPI.apiCaseToMatter ? CourtAPI.apiCaseToMatter(c, i) : {
         id: 'advm_' + (c.caseRef || i),
         caseRef: c.caseRef,
         caseType: c.caseType || '',
@@ -7185,9 +7329,30 @@ function SettingsPage() {
         status: c.status || 'PENDING',
         nextHearing: c.nextHearing || null,
       };
-      m._liveData = true;
-      m._source = 'advmgmtsys';
-      return m;
+      // Force a stable id keyed to caseRef so subsequent syncs match the same matter.
+      base.id = 'advm_' + (c.caseRef || base.id);
+      base._liveData = true;
+      base._source = 'advmgmtsys';
+      // v5 fields — carry through anything the list scrape captured
+      base._detailUrl = c.detailUrl || null;
+      base._listingDates = c.listingDates || [];
+      base._rawCells = c.rawCells || [];
+      // If the list had a hearing date, surface it as nextHearing
+      if (!base.nextHearing && c.nextHearing) base.nextHearing = c.nextHearing;
+      // Populate fields the LegalDesk UI expects
+      if (!base.petitioner && c.petitioner) base.petitioner = c.petitioner;
+      if (!base.respondent && c.respondent) base.respondent = c.respondent;
+      if (!base.title || base.title === base.caseRef) base.title = c.title || c.parties || base.title;
+      // Status default
+      if (!base.status) base.status = 'PENDING';
+      // Set summary block if we have parties
+      if (!base.summary && (c.petitioner || c.respondent)) {
+        base.summary = {
+          petitioner: c.petitioner || '',
+          respondent: c.respondent || '',
+        };
+      }
+      return base;
     });
     if (typeof setMatters === 'function') {
       setMatters(prev => {

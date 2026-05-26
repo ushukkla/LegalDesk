@@ -1,0 +1,42 @@
+# ═══════════════════════════════════════════════════════════════════════
+#  LegalDesk API — Fly.io config
+#  Region: Mumbai (bom) for low latency to Indian advocates
+# ═══════════════════════════════════════════════════════════════════════
+
+app = "legaldeskai"             # ⚠ this name must be globally unique on Fly. If taken, append your initials, e.g. "legaldesk-api-us"
+primary_region = "bom"             # Mumbai. Other options: del (Delhi - new), sin (Singapore), sea (Seattle, US)
+
+[build]
+  dockerfile = "Dockerfile"
+  # build_target = "production"  # uncomment if you want to force the production stage; not needed with current Dockerfile
+
+[env]
+  NODE_ENV = "production"
+  TZ = "Asia/Kolkata"
+  # PORT is set by Fly automatically based on internal_port below — don't hardcode here
+
+[http_service]
+  internal_port = 3001             # must match what api-server/index.js binds to (process.env.PORT)
+  force_https = true
+  auto_stop_machines = "off"        # KEEP RUNNING — same as Render starter, no cold starts
+  auto_start_machines = true        # if it ever does stop, auto-start on next request
+  min_machines_running = 1          # critical: keeps at least one warm always
+  processes = ["app"]
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "20s"             # tesseract loads slowly on first boot; give it time
+    method = "get"
+    path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"                   # 256mb is tight for tesseract + sharp + node; 512 is safer ($~3.88/mo)
+  cpu_kind = "shared"
+  cpus = 1
+
+# Don't set restart_policy here — Fly's default ("always") is what you want.
+
+[deploy]
+  strategy = "rolling"               # one machine at a time so health-check failures don't bring you down

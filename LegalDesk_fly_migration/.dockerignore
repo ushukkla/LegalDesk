@@ -1,0 +1,20 @@
+# Same as the existing .dockerignore, copied here for completeness so Fly builds
+# from the right context. If your repo already has a .dockerignore, leave it alone.
+node_modules
+*.log
+.git
+.gitignore
+.DS_Store
+LegalDesk_fix
+LegalDesk_fix_v2
+LegalDesk_fix_v3
+LegalDesk_fix_v4
+LegalDesk_fix_v4_1
+LegalDesk_fix_v4_2
+LegalDesk_fly_migration
+LegalDesk_Audit_and_Roadmap.docx
+*.html
+!api-server/**
+!allahabad-hc-mcp/**
+!Dockerfile
+!fly.toml
