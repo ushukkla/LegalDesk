@@ -2107,10 +2107,18 @@ const CourtAPI = {
       const resp = await fetch(`${this.baseUrl}${path}`, {
         ...options,
         headers: { 'Content-Type': 'application/json', ...options.headers },
-        signal: AbortSignal.timeout(30000),
+        signal: AbortSignal.timeout(60000),
       });
-      if (!resp.ok) throw new Error(`API error ${resp.status}`);
-      return await resp.json();
+      // Try to parse JSON body even on non-2xx, so the detailed `error` field
+      // returned by the backend (e.g., the actual login failure reason) survives.
+      let body = null;
+      try { body = await resp.json(); } catch (_) { body = null; }
+      if (!resp.ok) {
+        const errMsg = (body && (body.error || body.message)) || `API error ${resp.status}`;
+        console.warn('[CourtAPI]', path, resp.status, errMsg);
+        return { status: body?.status || 'error', error: errMsg, httpStatus: resp.status, ...(body || {}) };
+      }
+      return body || { status: 'error', error: 'Empty response from API' };
     } catch (err) {
       console.warn('[CourtAPI]', path, err.message);
       return { status: 'error', error: err.message };
@@ -7147,6 +7155,10 @@ function SettingsPage() {
         LS.set('advmgmtsys_last_sync', { at: Date.now(), error: note });
         setSyncModal({ stage: 'done', result: r, note });
         addToast('Logged in but matters not found — please report', 'info');
+      } else if (r.errorCode === 'captcha_wrong') {
+        // Auto-refresh the captcha so the user can immediately retry with the same modal.
+        addToast('Captcha was wrong — fetching a fresh one', 'info');
+        await startAdvmgmtSync(false);
       } else {
         setSyncModal({ stage: 'error', error: r.error || 'Login failed', detail: r });
         setSyncStatus({ at: Date.now(), error: r.error });
@@ -7453,7 +7465,17 @@ function SettingsPage() {
               <div>
                 <div style={{padding:'14px 16px', background:'var(--danger-bg)', color:'var(--danger)', borderRadius:'var(--radius)', fontSize:13, marginBottom:14, lineHeight:1.5}}>
                   <strong>Sync failed.</strong><br />{syncModal.error}
+                  {syncModal.detail?.hint && <div style={{marginTop:8, fontSize:12, opacity:0.9}}>{syncModal.detail.hint}</div>}
                 </div>
+                {syncModal.detail?.debugTrace && (
+                  <details style={{marginBottom:14, fontSize:11, color:'var(--text-muted)'}}>
+                    <summary style={{cursor:'pointer'}}>Show technical details</summary>
+                    <pre style={{margin:'8px 0 0', padding:10, background:'var(--bg-elevated)', borderRadius:'var(--radius)', overflow:'auto', maxHeight:160, fontFamily:'monospace', fontSize:11}}>
+{(syncModal.detail.debugTrace || []).join('\n')}
+{syncModal.detail.finalUrl ? `\nFinal URL: ${syncModal.detail.finalUrl}` : ''}
+                    </pre>
+                  </details>
+                )}
                 <div style={{display:'flex', gap:8, justifyContent:'flex-end'}}>
                   <button className="btn btn-ghost" onClick={() => setSyncModal(null)}>Close</button>
                   <button className="btn btn-primary" onClick={() => startAdvmgmtSync(false)}>Try again</button>
