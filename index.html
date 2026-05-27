@@ -5318,10 +5318,8 @@ function MatterDetailPage() {
       setAdvmgmtDetailError('No advmgmtsys credentials saved. Set them in Settings.');
       return;
     }
-    if (!m._detailUrl) {
-      setAdvmgmtDetailError('No detail URL captured for this matter. Click Sync Now in Settings to re-sync with v5 list capture.');
-      return;
-    }
+    // v5.2: it's now OK to call the detail endpoint without a detailUrl —
+    // the backend falls back to public CCMS using the caseRef. Just pass what we have.
     setFetchingAdvmgmtDetail(true);
     setAdvmgmtDetailError(null);
     try {
@@ -5379,9 +5377,10 @@ function MatterDetailPage() {
     }
   }, [m?.id]);
 
-  // Auto-fetch on mount when this is an advmgmtsys matter without detail yet
+  // Auto-fetch on mount when this is an advmgmtsys matter without detail yet.
+  // v5.2: no longer gated on m._detailUrl — even without it, backend will try CCMS fallback.
   useEffect(() => {
-    if (m?._source === 'advmgmtsys' && !m._detailFetched && m._detailUrl) {
+    if (m?._source === 'advmgmtsys' && !m._detailFetched) {
       refreshAdvmgmtDetail(false);
     }
   }, [m?.id]);
@@ -7366,18 +7365,26 @@ function SettingsPage() {
       base.id = 'advm_' + (c.caseRef || base.id);
       base._liveData = true;
       base._source = 'advmgmtsys';
-      // v5 fields — carry through anything the list scrape captured
+      // v5 + v5.2 fields — carry through everything the list scrape captured
       base._detailUrl = c.detailUrl || null;
       base._listingDates = c.listingDates || [];
       base._rawCells = c.rawCells || [];
-      // If the list had a hearing date, surface it as nextHearing
+      base._extraColumns = c.extraColumns || {};
+      base._advocateSide = c.advocateSide || null;
+      // Use the LIST hearing date if backend gave one
       if (!base.nextHearing && c.nextHearing) base.nextHearing = c.nextHearing;
+      if (!base.lastHearing && c.lastHearing) base.lastHearing = c.lastHearing;
+      // v5.2: Registration Date from the list = filing/first hearing date
+      if (!base.firstHearing && (c.firstHearing || c.registrationDate)) {
+        base.firstHearing = c.firstHearing || c.registrationDate;
+      }
       // Populate fields the LegalDesk UI expects
       if (!base.petitioner && c.petitioner) base.petitioner = c.petitioner;
       if (!base.respondent && c.respondent) base.respondent = c.respondent;
       if (!base.title || base.title === base.caseRef) base.title = c.title || c.parties || base.title;
-      // Status default
-      if (!base.status) base.status = 'PENDING';
+      // Status: prefer the backend-mapped one (PENDING/DISPOSED)
+      if (c.status) base.status = c.status;
+      else if (!base.status) base.status = 'PENDING';
       // Set summary block if we have parties
       if (!base.summary && (c.petitioner || c.respondent)) {
         base.summary = {
