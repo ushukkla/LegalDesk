@@ -2203,6 +2203,11 @@ const CourtAPI = {
     });
   },
 
+  /** Diagnostic — dump advmgmtsys list HTML so we can see the structure */
+  async advmgmtsysDebugList(username) {
+    return this._fetch(`/api/advmgmtsys-debug-list?username=${encodeURIComponent(username)}`);
+  },
+
   /** Convert raw API case data to the app's Matter format */
   apiCaseToMatter(apiCase, index) {
     const id = 'live_' + (apiCase.caseType || 'X') + '_' + (apiCase.caseNo || index) + '_' + (apiCase.year || '');
@@ -7213,6 +7218,34 @@ function SettingsPage() {
   //                 sessionId, captchaPng, captchaText, error, result }
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncStatus, setSyncStatus] = useState(LS.get('advmgmtsys_last_sync', null));
+  // Diagnostic state — dumps the raw advmgmtsys list HTML so support can fix parsing
+  const [diagBusy, setDiagBusy] = useState(false);
+  const [diagOutput, setDiagOutput] = useState('');
+
+  const runDiagnose = async () => {
+    const creds = LS.get('advmgmtsys_creds');
+    if (!creds?.username) { addToast('Save advmgmtsys credentials first', 'error'); return; }
+    setDiagBusy(true);
+    setDiagOutput('Fetching diagnostic info from advmgmtsys (may take 15-30s)…\n');
+    try {
+      const r = await CourtAPI.advmgmtsysDebugList(creds.username);
+      const dump = {
+        status: r.status,
+        foundAt: r.foundAt,
+        rowCount: r.rowCount,
+        triedUrls: r.tried,
+        firstRowHtml: r.firstRowHtml,
+        tableHtmlTruncated: r.tableHtmlTruncated,
+        error: r.error,
+        message: r.message,
+      };
+      setDiagOutput(JSON.stringify(dump, null, 2));
+    } catch (err) {
+      setDiagOutput('Error: ' + err.message);
+    } finally {
+      setDiagBusy(false);
+    }
+  };
 
   const saveCourt = () => {
     const updated = { ...user, court: chosenCourt };
@@ -7485,9 +7518,12 @@ function SettingsPage() {
                   <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowAdvmgmtForm(true)} style={{marginLeft:'auto'}}>Edit</button>
                   <button type="button" className="btn btn-ghost btn-sm" style={{color:'var(--danger)'}} onClick={clearAdvmgmtCreds}>Clear</button>
                 </div>
-                <div style={{display:'flex', gap:8, alignItems:'center'}}>
+                <div style={{display:'flex', gap:8, alignItems:'center', flexWrap:'wrap'}}>
                   <button type="button" className="btn btn-primary btn-sm" onClick={() => startAdvmgmtSync(true)} disabled={syncBusy}>
                     {syncBusy ? 'Working…' : (Icons.refresh || '🔄') + ' Sync Now'}
+                  </button>
+                  <button type="button" className="btn btn-outline btn-sm" onClick={runDiagnose} disabled={diagBusy} title="Dump advmgmtsys list HTML so support can fix the parser">
+                    {diagBusy ? 'Diagnosing…' : '🔍 Diagnose'}
                   </button>
                   {syncStatus?.at && (
                     <span style={{fontSize:11, color:'var(--text-muted)'}}>
@@ -7497,6 +7533,21 @@ function SettingsPage() {
                     </span>
                   )}
                 </div>
+                {diagOutput && (
+                  <div style={{marginTop:12}}>
+                    <div style={{fontSize:11, color:'var(--text-muted)', marginBottom:6}}>
+                      Diagnostic output — copy ALL of this and paste in chat for support:
+                      <button className="btn btn-ghost btn-sm" style={{marginLeft:8, fontSize:10, padding:'2px 8px'}} onClick={() => { navigator.clipboard.writeText(diagOutput); addToast('Copied to clipboard', 'success'); }}>📋 Copy all</button>
+                      <button className="btn btn-ghost btn-sm" style={{marginLeft:4, fontSize:10, padding:'2px 8px'}} onClick={() => setDiagOutput('')}>✕ Hide</button>
+                    </div>
+                    <textarea
+                      readOnly
+                      value={diagOutput}
+                      style={{width:'100%', height:240, padding:10, fontFamily:'monospace', fontSize:11, background:'var(--bg-elevated)', border:'1px solid var(--border)', borderRadius:'var(--radius)', color:'var(--text-primary)', resize:'vertical'}}
+                      onFocus={e => e.target.select()}
+                    />
+                  </div>
+                )}
               </div>
             )}
             {showAdvmgmtForm && (
